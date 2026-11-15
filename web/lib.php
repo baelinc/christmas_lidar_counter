@@ -155,6 +155,25 @@ function cc_usb_ports() {
     return $ports;
 }
 
+/* State of the Pi's GPIO serial port:
+ *  ready         - switched on and the login console is off (the lidar can use the GPIO pins)
+ *  needs_restart - switched on in the boot files, but the Pi has not restarted since
+ *  not_enabled   - not switched on (install.sh does this; re-run it)
+ *  unknown       - not a Raspberry Pi */
+function cc_uart_state() {
+    $cfgf = $cmdf = '';
+    $dirs = getenv('CC_BOOT_DIR') ? array(getenv('CC_BOOT_DIR')) : array('/boot/firmware', '/boot');
+    foreach ($dirs as $d) {
+        if (is_file($d . '/config.txt')) { $cfgf = $d . '/config.txt'; $cmdf = $d . '/cmdline.txt'; break; }
+    }
+    if ($cfgf === '') return 'unknown';
+    $console = '/console=(serial0|ttyAMA0|ttyS0),/';
+    $on = preg_match('/^enable_uart=1\s*$/m', (string)@file_get_contents($cfgf)) && !preg_match($console, (string)@file_get_contents($cmdf));
+    if (!$on) return 'not_enabled';
+    $running = (string)@file_get_contents(getenv('CC_PROC_CMDLINE') ?: '/proc/cmdline');
+    return preg_match($console, $running) ? 'needs_restart' : 'ready';
+}
+
 function cc_status() {
     $st = cc_read_json(CC_RUN_DIR . '/status.json');
     $running = ($st !== null && isset($st['ts']) && (microtime(true) - $st['ts']) < 6);
@@ -172,10 +191,11 @@ function cc_send_command($cmd) {
 }
 
 function cc_service($op) {
-    if (!in_array($op, array('start', 'stop', 'restart'), true)) return 'bad op';
-    // systemd runs the counter; the web user may restart only that one unit (see the sudoers rule made by install.sh)
+    if (!in_array($op, array('start', 'stop', 'restart', 'reboot'), true)) return 'bad op';
+    // systemd runs the counter; the web user may only start/stop/restart that one unit or restart the Pi (sudoers rule made by install.sh)
     $out = array();
-    exec('sudo -n ' . escapeshellarg(getenv('CC_SYSTEMCTL') ?: 'systemctl') . ' ' . escapeshellarg($op) . ' car-counter 2>&1', $out);
+    $sc = 'sudo -n ' . escapeshellarg(getenv('CC_SYSTEMCTL') ?: 'systemctl') . ' ' . escapeshellarg($op);
+    exec($op === 'reboot' ? $sc . ' 2>&1' : $sc . ' car-counter 2>&1', $out);
     return implode("\n", $out) ?: 'Done';
 }
 

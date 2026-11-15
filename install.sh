@@ -1,15 +1,16 @@
 #!/bin/bash
 # Christmas Lidar Counter - install on a Raspberry Pi.
-#   sudo ./install.sh [--port 8080] [--password 'secret'] [--uart] [--no-start]
+#   sudo ./install.sh [--port 8080] [--password 'secret'] [--reboot] [--no-uart] [--no-start]
 # Safe to run again: it updates the program and keeps your settings and counts.
 set -euo pipefail
 
-PORT=8080; PASSWORD=""; UART=0; START=1
+PORT=8080; PASSWORD=""; UART=1; REBOOT=0; START=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --port) PORT="${2:?--port needs a number}"; shift 2 ;;
         --password) PASSWORD="${2:?--password needs a value}"; shift 2 ;;
-        --uart) UART=1; shift ;;
+        --no-uart) UART=0; shift ;;
+        --reboot) REBOOT=1; shift ;;
         --no-start) START=0; shift ;;
         -h|--help) sed -n '2,4p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
@@ -83,7 +84,7 @@ fi
 
 echo "== Permission for the web page to restart the counter"
 cat > /etc/sudoers.d/car-counter <<SUDO
-$USER_NAME ALL=(root) NOPASSWD: $SYSTEMCTL start car-counter, $SYSTEMCTL stop car-counter, $SYSTEMCTL restart car-counter
+$USER_NAME ALL=(root) NOPASSWD: $SYSTEMCTL start car-counter, $SYSTEMCTL stop car-counter, $SYSTEMCTL restart car-counter, $SYSTEMCTL reboot
 SUDO
 chmod 440 /etc/sudoers.d/car-counter
 if command -v visudo >/dev/null 2>&1 && ! visudo -cf /etc/sudoers.d/car-counter >/dev/null; then
@@ -97,11 +98,15 @@ done
 "$SYSTEMCTL" daemon-reload
 "$SYSTEMCTL" enable car-counter car-counter-web >/dev/null 2>&1
 
+NEED_REBOOT=0
 if [ "$UART" = 1 ]; then
-    echo "== Enabling the GPIO serial port"
+    echo "== Switching on the Pi's serial port (so the lidar can use the GPIO pins)"
+    BOOTDIR=/boot/firmware; [ -f "$BOOTDIR/config.txt" ] || BOOTDIR=/boot
+    BEFORE="$(cat "$BOOTDIR/config.txt" "$BOOTDIR/cmdline.txt" 2>/dev/null | md5sum)"
     "$APP/scripts/enable_uart.sh" || echo "Could not change the serial settings - use raspi-config > Interface Options > Serial Port" >&2
-    usermod -a -G dialout "$USER_NAME"
-    echo "   Reboot the Pi when this finishes, then pick /dev/serial0 in the settings."
+    AFTER="$(cat "$BOOTDIR/config.txt" "$BOOTDIR/cmdline.txt" 2>/dev/null | md5sum)"
+    [ "$BEFORE" != "$AFTER" ] && NEED_REBOOT=1
+    grep -Eq 'console=(serial0|ttyAMA0|ttyS0),' /proc/cmdline 2>/dev/null && [ -f "$BOOTDIR/config.txt" ] && NEED_REBOOT=1
 fi
 
 if [ "$START" = 1 ]; then
@@ -122,4 +127,16 @@ echo "   http://$(hostname).local:$PORT/   (user: admin)"
 echo
 echo "Check the Pi's clock - show hours use the Pi's own time zone."
 echo "   Time zone now: $TZ_NOW   (change: sudo timedatectl set-timezone America/Chicago)   Clock synced: $NTP_OK"
+if [ "$NEED_REBOOT" = 1 ]; then
+    echo
+    echo "One last thing: the Pi must restart once to finish switching on the serial port."
+    if [ "$REBOOT" = 1 ]; then
+        echo "Restarting in 5 seconds..."; sleep 5; "$SYSTEMCTL" reboot
+    elif [ -t 0 ]; then
+        read -r -p "Restart now? [Y/n] " ANS
+        case "$ANS" in n|N|no|NO) echo "OK - restart later with:  sudo reboot  (or use the button on the settings page)." ;; *) "$SYSTEMCTL" reboot ;; esac
+    else
+        echo "Restart it with:  sudo reboot   (or use the button on the settings page)."
+    fi
+fi
 echo "Only one device should upload car counts to your website. If another counter (for example an FPP plugin) also uploads, turn its Website Sync off."

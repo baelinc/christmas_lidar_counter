@@ -112,6 +112,73 @@ class PollFppTests(unittest.TestCase):
         self.assertFalse(self.d.shared["fpp_known"])
 
 
+class UartTests(unittest.TestCase):
+    """The GPIO serial port: set up automatically, safe to repeat, and the page can tell whether a restart is still needed."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.boot = os.path.join(self.dir, "boot"); os.makedirs(self.boot)
+        self.proc = os.path.join(self.dir, "proc_cmdline")
+        self.script = os.path.join(ROOT, "scripts", "enable_uart.sh")
+        self.php = os.path.join(ROOT, "web", "lib.php")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir)
+
+    def write(self, config="dtparam=audio=on\n", cmdline="console=serial0,115200 console=tty1 root=/dev/mmcblk0p2 rootwait", running=None):
+        open(os.path.join(self.boot, "config.txt"), "w").write(config)
+        open(os.path.join(self.boot, "cmdline.txt"), "w").write(cmdline)
+        open(self.proc, "w").write(cmdline if running is None else running)
+
+    def run_script(self):
+        return subprocess.run(["bash", self.script], env=dict(os.environ, CC_BOOT_DIR=self.boot), capture_output=True, text=True)
+
+    def state(self):
+        out = subprocess.check_output(["php", "-r", "require '%s'; echo cc_uart_state();" % self.php],
+                                      env=dict(os.environ, CC_BOOT_DIR=self.boot, CC_PROC_CMDLINE=self.proc)).decode()
+        return out.strip()
+
+    def test_script_switches_the_port_on_once_then_leaves_it_alone(self):
+        self.write()
+        self.assertEqual(self.state(), "not_enabled")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Restart the Pi", r.stdout)
+        cfg = open(os.path.join(self.boot, "config.txt")).read()
+        cmd = open(os.path.join(self.boot, "cmdline.txt")).read()
+        self.assertIn("enable_uart=1", cfg)
+        self.assertNotIn("console=serial0", cmd)
+        self.assertIn("console=tty1", cmd)                       # the screen console is untouched
+        self.assertFalse(cmd.startswith(" "))
+        self.assertIn("root=/dev/mmcblk0p2", cmd)
+        files = sorted(os.listdir(self.boot))
+        r2 = self.run_script()                                   # second run: nothing to do, no new backups
+        self.assertEqual(r2.returncode, 0)
+        self.assertIn("already", r2.stdout)
+        self.assertEqual(sorted(os.listdir(self.boot)), files)
+        self.assertEqual(open(os.path.join(self.boot, "config.txt")).read().count("enable_uart"), 1)
+
+    def test_script_fixes_enable_uart_zero(self):
+        self.write(config="enable_uart=0\n", cmdline="root=/dev/mmcblk0p2")
+        self.assertEqual(self.run_script().returncode, 0)
+        self.assertEqual(open(os.path.join(self.boot, "config.txt")).read().strip(), "enable_uart=1")
+
+    def test_state_needs_restart_until_the_pi_has_rebooted(self):
+        self.write()
+        self.run_script()                                        # boot files fixed; the running kernel still has the console
+        self.assertEqual(self.state(), "needs_restart")
+        open(self.proc, "w").write("console=tty1 root=/dev/mmcblk0p2 rootwait")   # after the restart
+        self.assertEqual(self.state(), "ready")
+
+    def test_not_a_pi(self):
+        empty = os.path.join(self.dir, "none"); os.makedirs(empty)
+        out = subprocess.check_output(["php", "-r", "require '%s'; echo cc_uart_state();" % self.php],
+                                      env=dict(os.environ, CC_BOOT_DIR=empty)).decode()
+        self.assertEqual(out.strip(), "unknown")
+        r = subprocess.run(["bash", self.script], env=dict(os.environ, CC_BOOT_DIR=empty), capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0)
+
+
 def free_port():
     s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
 
@@ -177,6 +244,17 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.get("/plugin.php?page=other.php", "admin:s3cret-pw")[0], 404)
         code, html = self.get("/", "admin:s3cret-pw")
         self.assertIn("Only while FPP is playing", html)
+
+    def test_ports_reports_serial_port_state(self):
+        code, body = self.get("/plugin.php?page=ajax.php&nopage=1&action=ports", "admin:s3cret-pw")
+        self.assertEqual(code, 200)
+        self.assertIn(json.loads(body)["uart"], ("ready", "needs_restart", "not_enabled", "unknown"))
+
+    def test_only_allowed_service_actions(self):
+        url = "/plugin.php?page=ajax.php&nopage=1&action=service"
+        hdr = {"X-Requested-With": "XMLHttpRequest", "Content-Type": "application/json"}
+        code, body = self.get(url, "admin:s3cret-pw", "POST", b'{"op":"rm -rf /"}', hdr)
+        self.assertEqual(json.loads(body)["output"], "bad op")
 
     def test_changes_need_the_page_header(self):
         url = "/plugin.php?plugin=x&page=ajax.php&nopage=1&action=save_config"

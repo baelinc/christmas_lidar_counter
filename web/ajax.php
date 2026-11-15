@@ -69,6 +69,7 @@ switch ($action) {
         cc_out(array(
             'usb'  => cc_usb_ports(),
             'gpio' => file_exists('/dev/serial0'),
+            'uart' => cc_uart_state(),
             'all'  => array_values(array_unique(array_merge(
                 glob('/dev/serial0') ?: array(), glob('/dev/ttyAMA*') ?: array(), glob('/dev/ttyS0') ?: array(),
                 glob('/dev/ttyUSB*') ?: array(), glob('/dev/ttyACM*') ?: array()))),

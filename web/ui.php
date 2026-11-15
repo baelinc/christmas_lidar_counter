@@ -27,7 +27,7 @@ require_once __DIR__ . '/lib.php';
 #cc button.b.on { background: var(--warn); border-color: var(--warn); color: #fff; }
 #cc button.b:disabled { opacity: .5; cursor: default; }
 #cc .msg { min-height: 1.4em; font-size: .95rem; }
-#cc .msg.ok { color: var(--accent); } #cc .msg.bad { color: var(--bad); }
+#cc .msg.ok { color: var(--accent); } #cc .msg.bad { color: var(--bad); } #cc .msg.warn { color: var(--warn); }
 #cc .track { position: relative; height: 26px; border: 1px solid var(--line); border-radius: 4px; margin: .5rem 0; background: rgba(128,128,128,.08); }
 #cc .zone { position: absolute; top: 0; bottom: 0; background: rgba(47,125,50,.25); border-left: 2px solid var(--accent); border-right: 2px solid var(--accent); }
 #cc .marker { position: absolute; top: -3px; bottom: -3px; width: 4px; background: #1f6feb; transition: left .15s; }
@@ -151,9 +151,9 @@ require_once __DIR__ . '/lib.php';
         <tr><td>Green (lidar TX)</td><td>Pin 10 (GPIO15 / RXD)</td></tr>
         <tr><td>White (lidar RX)</td><td>Pin 8 (GPIO14 / TXD)</td></tr>
       </tbody></table>
+      <div class="row"><span class="msg" id="uartMsg"></span><button class="b primary" id="btnRebootUart" style="display:none">Restart the Pi</button></div>
       <div class="help" style="opacity:.9;margin-top:.5rem">
-        First time using the GPIO serial port? Run <code>sudo /opt/car-counter/scripts/enable_uart.sh</code> over SSH once and reboot (or re-run the installer with <code>--uart</code>).
-        If an LED-panel HAT or bonnet uses these GPIO pins, use a USB-to-serial adapter instead.
+        The Pi's serial port is switched on for you when you install. If an LED-panel HAT or bonnet uses these GPIO pins, use a USB-to-serial adapter instead.
       </div>
     </div>
     <div class="panel"><h3>Sensor</h3><div id="fSensor"></div></div>
@@ -206,6 +206,7 @@ require_once __DIR__ . '/lib.php';
       <button class="b" data-svc="restart">Restart counter service</button>
       <button class="b" data-svc="start">Start</button>
       <button class="b" data-svc="stop">Stop</button>
+      <button class="b danger" id="btnRebootLog">Restart the Pi</button>
       <span class="msg" id="svcMsg"></span>
     </div>
     <pre id="logBox">Loading…</pre>
@@ -249,7 +250,7 @@ require_once __DIR__ . '/lib.php';
   var FIELDS = {
     fSensor: [
       { k: 'show_name', l: 'Show name', t: 'text', h: 'Shown on your website.' },
-      { k: 'connection', l: 'How is the lidar connected?', t: 'select', o: [['usb', 'USB-to-serial adapter (CP2102 etc.) – easiest'], ['gpio', 'Pi GPIO header pins'], ['custom', 'Custom serial port (advanced)']], h: 'A USB adapter needs no serial-port setup and avoids conflicts with LED-panel HATs.' },
+      { k: 'connection', l: 'How is the lidar connected?', t: 'select', o: [['usb', 'USB-to-serial adapter (CP2102 etc.) – easiest'], ['gpio', 'Pi GPIO header pins (wired to the Pi)'], ['custom', 'Custom serial port (advanced)']], h: 'Choose how the lidar is plugged in. A USB adapter avoids conflicts with LED-panel HATs; the GPIO pins need no adapter.' },
       { k: 'usb_device', l: 'USB adapter', t: 'select', o: [['', 'Auto-detect (recommended)']], h: 'Only change this if you have more than one USB serial device plugged in.' },
       { k: 'serial_port', l: 'Serial port', t: 'text', list: 'ccPorts', h: 'Full device path, e.g. /dev/ttyAMA1.' },
       { k: 'baud', l: 'Baud rate', t: 'select', o: [9600, 19200, 38400, 57600, 115200, 230400], h: 'TFmini, TFmini-S, TFmini Plus and TF-Luna all default to 115200.' },
@@ -335,7 +336,7 @@ require_once __DIR__ . '/lib.php';
     (cfg.schedules || []).forEach(function (e) { ed.appendChild(schedRow(e)); });
     schedEmptyNote();
   }
-  var portInfo = { usb: [], gpio: false, all: [] };
+  var portInfo = { usb: [], gpio: false, all: [], uart: 'unknown' };
   function populateUsb() {
     var sel = $('cf_usb_device'), cur = cfg ? cfg.usb_device : sel.value;
     sel.textContent = '';
@@ -354,6 +355,7 @@ require_once __DIR__ . '/lib.php';
     $('row_serial_port').style.display = (m === 'custom') ? '' : 'none';
     $('wireUsb').style.display = (m === 'usb') ? '' : 'none';
     $('wireGpio').style.display = (m === 'gpio') ? '' : 'none';
+    renderUart();
   }
   function applyModeVisibility() {
     var f = $('schedField'); if (f) f.style.display = ($('cf_schedule_mode').value !== 'always') ? '' : 'none';
@@ -480,6 +482,22 @@ require_once __DIR__ . '/lib.php';
       });
     };
   });
+  function renderUart() {
+    var m = $('uartMsg'), b = $('btnRebootUart'), u = portInfo.uart;
+    if (!m) return;
+    b.style.display = (u === 'needs_restart') ? '' : 'none';
+    if (u === 'ready') setMsg(m, 'The Pi’s serial port is switched on and ready.', true);
+    else if (u === 'needs_restart') { m.textContent = 'The serial port is switched on, but the Pi needs one restart to finish. Press the button – the counter comes back by itself in about a minute.'; m.className = 'msg warn'; }
+    else if (u === 'not_enabled') { m.textContent = 'The serial port is not switched on yet. Run the installer again (sudo ./install.sh) and restart the Pi.'; m.className = 'msg warn'; }
+    else setMsg(m, '', true);
+  }
+  function rebootPi(msgEl) {
+    if (!confirm('Restart the Pi now? The counter will be offline for about a minute.')) return;
+    setMsg(msgEl, 'Restarting… this page will reconnect when the Pi is back (about a minute).', true);
+    api('service', { op: 'reboot' }).then(function (r) { if (r.output && r.output !== 'Done') setMsg(msgEl, r.output, false); });
+  }
+  $('btnRebootUart').onclick = function () { rebootPi($('uartMsg')); };
+  $('btnRebootLog').onclick = function () { rebootPi($('svcMsg')); };
   $('btnLog').onclick = loadLog;
   function loadLog() {
     api('log').then(function (r) {
@@ -628,7 +646,7 @@ require_once __DIR__ . '/lib.php';
     var sensorOk = !!(running && status && status.sensor && status.sensor.ok);
     var web = !!(cfg.sync_enabled && cfg.wp_url && cfg.secret_set);
     var items = [
-      { done: sensorOk, req: true, t: 'Connect the lidar sensor', d: sensorOk ? 'Sensor is sending readings.' : 'Plug it in and choose how it is connected.', tab: 'settings' },
+      { done: sensorOk, req: true, t: 'Connect the lidar sensor', d: sensorOk ? 'Sensor is sending readings.' : (cfg.connection === 'gpio' && portInfo.uart === 'needs_restart' ? 'Restart the Pi once to finish switching on the serial port.' : 'Plug it in and choose how it is connected.'), tab: 'settings' },
       { done: !!(cfg.schedules && cfg.schedules.length) || cfg.schedule_mode === 'always', req: false, t: 'Set your show hours', d: 'Cars are only counted during these hours.', tab: 'settings' },
       { done: cfg.min_cm > 30, req: false, t: 'Count only one lane (optional)', d: 'Avoids counting cars twice on a two-way road.', tab: 'settings' },
       { done: web, req: true, t: 'Connect to your website', d: web ? 'Uploading to ' + cfg.wp_url + '.' : 'Enter your website address and secret.', tab: 'website' }
@@ -714,6 +732,7 @@ require_once __DIR__ . '/lib.php';
   api('config').then(function (c) { cfg = c; fillForms(); renderSetup(); });
   api('ports').then(function (p) {
     portInfo = p; dl.textContent = '';
+    renderUart(); renderSetup();
     (p.all || []).forEach(function (x) { var o = document.createElement('option'); o.value = x; dl.appendChild(o); });
     populateUsb();
   });

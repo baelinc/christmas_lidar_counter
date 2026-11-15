@@ -57,7 +57,7 @@ body #cc input[type=text], body #cc input[type=number], body #cc input[type=pass
 body #cc input:focus, body #cc select:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px rgba(27,127,75,.2); }
 body #cc input[type=checkbox] { width: 1.4rem; height: 1.4rem; accent-color: var(--green); }
 body #cc .help { color: var(--muted); opacity: 1; font-size: .86rem; line-height: 1.4; }
-body #cc .msg.ok { color: var(--green); } body #cc .msg.bad { color: var(--red); }
+body #cc .msg.ok { color: var(--green); } body #cc .msg.bad { color: var(--red); } body #cc .msg.warn { color: var(--amber); }
 
 body #cc .track { height: 34px; border-radius: 10px; border: 0; background: var(--bg); overflow: hidden; }
 body #cc .zone { background: var(--green-soft); border-color: var(--green); }

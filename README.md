@@ -32,7 +32,8 @@ example the entrance of your street, without needing it to be next to your show 
    sudo ./install.sh
    ```
    It asks you to choose a password for the settings page (or makes one up and shows it).
-   **Lidar wired to the GPIO pins instead of a USB adapter?** Run `sudo ./install.sh --uart` and reboot afterwards.
+   The installer also switches on the Pi's serial port, so the lidar can use either USB or the GPIO pins – you pick in the web page.
+   The Pi needs **one restart** after that; the installer offers to do it (or add `--reboot`), and the web page has a *Restart the Pi* button if it's still needed.
 4. Open **http://roadcounter.local:8080/** (or the address the installer prints), log in as **admin**, and follow the
    *Let's get you set up* list on the Dashboard.
 
@@ -52,7 +53,7 @@ In **Sensor & Schedule**, set *How is the lidar connected?*; the page shows the 
 
 The data wires cross over (lidar TX → receive pin). Wire colours differ between sensor models – check your datasheet.
 The lidar needs 5 V power; its data signals are 3.3 V. A USB adapter needs no serial‑port setup; the GPIO header does
-(`sudo ./install.sh --uart`, then reboot, then choose `/dev/serial0`).
+(the installer switches it on for you; the Pi needs one restart afterwards, and the web page tells you if it's still waiting).
 
 ## Set up, in this order
 1. **Sensor** – *Sensor & Schedule* tab: choose how it is connected. The Dashboard pill turns green: *Sensor: OK*.
