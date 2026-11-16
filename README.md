@@ -34,7 +34,7 @@ example the entrance of your street, without needing it to be next to your show 
    It asks you to choose a password for the settings page (or makes one up and shows it).
    The installer also switches on the Pi's serial port, so the lidar can use either USB or the GPIO pins – you pick in the web page.
    The Pi needs **one restart** after that; the installer offers to do it (or add `--reboot`), and the web page has a *Restart the Pi* button if it's still needed.
-4. Open **http://roadcounter.local:8080/** (or the address the installer prints), log in as **admin**, and follow the
+4. Open **http://roadcounter.local/** (or the address the installer prints), log in as **admin**, and follow the
    *Let's get you set up* list on the Dashboard.
 
 **Update later:** `cd christmas_lidar_counter && git pull && sudo ./install.sh` (settings and counts are kept).

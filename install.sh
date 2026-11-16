@@ -1,10 +1,10 @@
 #!/bin/bash
 # Christmas Lidar Counter - install on a Raspberry Pi.
-#   sudo ./install.sh [--port 8080] [--password 'secret'] [--reboot] [--no-uart] [--no-start]
+#   sudo ./install.sh [--port 80] [--password 'secret'] [--reboot] [--no-uart] [--no-start]
 # Safe to run again: it updates the program and keeps your settings and counts.
 set -euo pipefail
 
-PORT=8080; PASSWORD=""; UART=1; REBOOT=0; START=1
+PORT=""; PASSWORD=""; UART=1; REBOOT=0; START=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --port) PORT="${2:?--port needs a number}"; shift 2 ;;
@@ -16,7 +16,14 @@ while [ $# -gt 0 ]; do
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done
-case "$PORT" in ''|*[!0-9]*) echo "--port must be a number" >&2; exit 2 ;; esac
+if [ -z "$PORT" ]; then
+    PORT=80
+    # Port 80 is the normal web port. If something else already uses it (and it is not our own page), use 8080 instead.
+    if (exec 3<>/dev/tcp/127.0.0.1/80) 2>/dev/null && ! systemctl is-active --quiet car-counter-web 2>/dev/null; then
+        PORT=8080; echo "Port 80 is already in use on this Pi, so the page will use port 8080."
+    fi
+fi
+case "$PORT" in *[!0-9]*) echo "--port must be a number" >&2; exit 2 ;; esac
 
 if [ "$(id -u)" != "0" ]; then echo "Run with sudo:  sudo $0" >&2; exit 1; fi
 SRC="$(cd "$(dirname "$0")" && pwd)"
@@ -122,8 +129,9 @@ NTP_OK="$(timedatectl show -p NTPSynchronized --value 2>/dev/null || echo unknow
 IPS="$(hostname -I 2>/dev/null | tr -s ' ' | sed 's/ $//')"
 echo
 echo "Done. Open the settings page:"
-for ip in $IPS; do echo "   http://$ip:$PORT/"; done
-echo "   http://$(hostname).local:$PORT/   (user: admin)"
+SUFFIX=""; [ "$PORT" = 80 ] || SUFFIX=":$PORT"
+for ip in $IPS; do echo "   http://$ip$SUFFIX/"; done
+echo "   http://$(hostname).local$SUFFIX/   (user: admin)"
 echo
 echo "Check the Pi's clock - show hours use the Pi's own time zone."
 echo "   Time zone now: $TZ_NOW   (change: sudo timedatectl set-timezone America/Chicago)   Clock synced: $NTP_OK"
