@@ -33,11 +33,17 @@ ETC=/etc/car-counter
 DATA=/var/lib/car-counter
 LOGDIR=/var/log/car-counter
 
-echo "== Installing packages (this can take a few minutes on a slow connection - please wait)"
-if command -v apt-get >/dev/null 2>&1; then
+NEED=""
+command -v python3 >/dev/null 2>&1 || NEED="$NEED python3"
+command -v php >/dev/null 2>&1 || NEED="$NEED php-cli"
+command -v sudo >/dev/null 2>&1 || NEED="$NEED sudo"
+if [ -n "$NEED" ] && command -v apt-get >/dev/null 2>&1; then
+    echo "== Installing packages:$NEED (this can take several minutes on a slow Pi - please wait)"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y python3 php-cli sudo ca-certificates
+    apt-get install -y $NEED ca-certificates
+else
+    echo "== Required packages are already installed"
 fi
 command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
 command -v php >/dev/null || { echo "php-cli is required (sudo apt install php-cli)" >&2; exit 1; }
