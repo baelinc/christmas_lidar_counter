@@ -26,11 +26,11 @@ ETC=/etc/car-counter
 DATA=/var/lib/car-counter
 LOGDIR=/var/log/car-counter
 
-echo "== Installing packages"
+echo "== Installing packages (this can take a few minutes on a slow connection - please wait)"
 if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq
-    apt-get install -y -qq python3 php-cli sudo ca-certificates >/dev/null
+    apt-get update
+    apt-get install -y python3 php-cli sudo ca-certificates
 fi
 command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
 command -v php >/dev/null || { echo "php-cli is required (sudo apt install php-cli)" >&2; exit 1; }
