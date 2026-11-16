@@ -11,7 +11,8 @@ Environment=PHP_CLI_SERVER_WORKERS=3
 # lets the limited service account listen on port 80 (ports below 1024 are normally root-only)
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 # sudo (used only to restart the counter unit) needs privileges, so NoNewPrivileges is not set here
-ExecStart=/usr/bin/php -S 0.0.0.0:${CC_WEB_PORT} -t @APP@/web @APP@/web/router.php
+# opcache keeps the page code compiled in memory - a big saving on a slow single-core Pi (ignored if the extension is not installed)
+ExecStart=/usr/bin/php -d opcache.enable_cli=1 -S 0.0.0.0:${CC_WEB_PORT} -t @APP@/web @APP@/web/router.php
 Restart=always
 RestartSec=5
 ProtectHome=true

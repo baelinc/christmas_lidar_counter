@@ -54,6 +54,9 @@ require_once __DIR__ . '/lib.php';
 #cc .sched-row input[type=time] { padding: .3rem .4rem; width: 8.5rem; max-width: 8.5rem; }
 #cc .sched-quick button { border: 0; background: none; color: #1f6feb; cursor: pointer; font-size: .8rem; padding: 0 .3rem; }
 #cc .sched-del { margin-left: auto; }
+#ccToast { position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%); z-index: 9999; padding: .75rem 1.2rem; border-radius: 12px; font-weight: 600; box-shadow: 0 6px 24px rgba(0,0,0,.28); background: #1b7f4b; color: #fff; max-width: 92vw; text-align: center; opacity: 0; pointer-events: none; transition: opacity .2s; }
+#ccToast.show { opacity: 1; }
+#ccToast.bad { background: #c62f2f; }
 #cc .setup-item { display: flex; align-items: center; gap: .8rem; padding: .55rem 0; border-bottom: 1px solid var(--line); }
 #cc .setup-item:last-child { border-bottom: 0; }
 #cc .setup-ico { flex: none; width: 1.7rem; height: 1.7rem; border-radius: 50%; border: 2px solid var(--line); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: .95rem; }
@@ -430,11 +433,28 @@ require_once __DIR__ . '/lib.php';
     });
     return out;
   }
+  var toastTimer = null;
+  function toast(text, ok) {
+    var t = document.getElementById('ccToast');
+    if (!t) { t = document.createElement('div'); t.id = 'ccToast'; document.body.appendChild(t); }
+    t.textContent = text; t.className = (ok ? '' : 'bad ') + 'show';
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.className = ok ? '' : 'bad'; }, ok ? 3000 : 6000);
+  }
+  var saving = false;
   function save(boxes, msgEl) {
+    if (saving) return Promise.resolve(false);           // ignore a second click while the first save is still going
+    saving = true;
+    var btns = Array.prototype.slice.call(document.querySelectorAll('#cc button.primary'));
+    btns.forEach(function (b) { b.disabled = true; });
+    setMsg(msgEl, 'Saving… (a small Pi can take a few seconds)', true);
+    function done() { saving = false; btns.forEach(function (b) { b.disabled = false; }); }
     return api('save_config', collect(boxes)).then(function (r) {
       setMsg(msgEl, r.ok ? 'Saved – the counter picks this up within a second.' : (r.error || 'Save failed'), r.ok);
-      return api('config').then(function (c) { cfg = c; fillForms(); return r.ok; });
-    }).catch(function () { setMsg(msgEl, 'Save failed (could not reach the counter).', false); });
+      toast(r.ok ? 'Saved ✓' : (r.error || 'Save failed'), r.ok);
+      return api('config').then(function (c) { cfg = c; fillForms(); done(); return r.ok; });
+    }).catch(function () {
+      setMsg(msgEl, 'Save failed (could not reach the counter).', false); toast('Save failed – could not reach the counter', false); done();
+    });
   }
   $('btnSaveSettings').onclick = function () { save(['fSensor', 'fDetect', 'fSched'], $('saveMsg1')); };
   $('btnSaveWeb').onclick = function () { save(['fWebsite'], $('saveMsg2')); };
@@ -738,7 +758,15 @@ require_once __DIR__ . '/lib.php';
   });
   (function () { var h = (location.hash || '').replace('#', ''); if (h) gotoTab(h); })();
   refreshStats(); refresh();
-  setInterval(refresh, 1000);
-  setInterval(refreshStats, 15000);
+  var currentTab = function () { return $('tab-dash').style.display === 'none' ? 'other' : 'dash'; };
+  (function loop() {
+    // one request at a time, never faster than the Pi can answer; relaxed on other tabs and paused when the page is in the background
+    var wait = document.hidden ? 5000 : (currentTab() === 'dash' ? 1500 : 4000);
+    setTimeout(function () {
+      if (document.hidden) return loop();
+      Promise.resolve(refresh()).then(loop, loop);
+    }, wait);
+  })();
+  setInterval(function () { if (!document.hidden) refreshStats(); }, 20000);
 })();
 </script>
