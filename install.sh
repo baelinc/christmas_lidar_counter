@@ -58,6 +58,7 @@ cp -a "$SRC/set-password.sh" "$APP/"
 find "$APP" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
 chmod +x "$APP"/*.sh "$APP"/scripts/*.sh "$APP"/counter/*.py 2>/dev/null || true
 chown -R root:root "$APP"
+chmod 755 "$APP/scripts/wifi_helper.py"
 
 echo "== Service account and folders"
 id "$USER_NAME" >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sbin/nologin "$USER_NAME"
@@ -95,9 +96,10 @@ else
     echo "   Keeping the existing password (change it with: sudo car-counter-passwd)"
 fi
 
-echo "== Permission for the web page to restart the counter"
+echo "== Permission for the web page to restart the counter and change Wi-Fi"
 cat > /etc/sudoers.d/car-counter <<SUDO
 $USER_NAME ALL=(root) NOPASSWD: $SYSTEMCTL start car-counter, $SYSTEMCTL stop car-counter, $SYSTEMCTL restart car-counter, $SYSTEMCTL reboot
+$USER_NAME ALL=(root) NOPASSWD: $APP/scripts/wifi_helper.py *
 SUDO
 chmod 440 /etc/sudoers.d/car-counter
 if command -v visudo >/dev/null 2>&1 && ! visudo -cf /etc/sudoers.d/car-counter >/dev/null; then

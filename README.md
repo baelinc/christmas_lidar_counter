@@ -16,7 +16,8 @@ example the entrance of your street, without needing it to be next to your show 
 * **Follow your show** – enter your master Falcon Player's address and cars are only counted while a show is playing; if the Pi can't reach it, your show hours are used
 * Show schedule with any number of entries (days + hours, past‑midnight aware); detections outside it are kept as *off‑hours*
 * Test mode, one‑click **Calibrate empty road**, manual +1 / −1 / reset, warnings for a silent sensor or blocked beam
-* **BaldrickSignals** crowd board: estimated people per night, reported separately from cars
+* **BaldrickSignals** crowd board: estimated people per night, reported separately from cars. If the Pi is on both Ethernet and Wi‑Fi, choose which connection reaches the board (and the Falcon Player)
+* **Wi‑Fi tab** – switch Wi‑Fi on or off, scan for networks and join one from the web page (needs NetworkManager)
 * **Website sync**: nightly upload (catches up after a power cut), optional live updates, HMAC‑signed
 * Python standard library only; SQLite storage; restarts itself after a crash or reboot
 
@@ -61,7 +62,25 @@ The lidar needs 5 V power; its data signals are 3.3 V. A USB adapter needs no se
 3. **Follow your show (optional)** – *Count cars* → *Only while FPP is playing*, then your master Falcon Player's address.
 4. **Count one lane (optional)** – see below.
 5. **Website** – *Website Sync* tab: paste your site address and secret from the WordPress plugin, press *Test connection*.
-6. **Crowd board (optional)** – *Crowd (phones)* tab (the Pi must be on the same network as the board).
+6. **Crowd board (optional)** – *Crowd (phones)* tab. If the board is on your Ethernet network and the counter can't find it, set *Network connection to use* to *Ethernet*.
+7. **Wi‑Fi (optional)** – *Wi‑Fi* tab, see below.
+
+## Wi‑Fi from the web page
+The *Wi‑Fi* tab shows what the Pi is connected to, has an on/off switch, lists nearby networks with their signal strength, and
+joins one when you pick it and type the password. Hidden networks can be typed in by hand. Saved networks can be forgotten.
+
+* It works through **NetworkManager** (`nmcli`), which is the default on current Raspberry Pi OS and most Debian/Armbian images. If your
+  system manages Wi‑Fi another way the tab says so and nothing is changed.
+* **You need a way to reach the page the first time.** Plug in Ethernet (or set Wi‑Fi up with `sudo nmtui`) to open the page, then use the tab.
+* Joining a network can drop the page's own connection if you are using Wi‑Fi to view it. The Pi finishes the job on its own, the page
+  keeps trying, and if the new network fails the Pi goes back to the one it was on. If you lose the page, join the same network on your
+  phone or computer and open the Pi's new address (your router's device list shows it, or run `hostname -I` on the Pi).
+* The switch warns you before turning Wi‑Fi off when that would cut you off.
+* How it is kept safe: the web page never gets a shell. It may run one root‑owned script (`scripts/wifi_helper.py`, set up by `install.sh`
+  with a single sudo rule), which checks every value and talks to `nmcli` without a shell. Passwords go to the script on stdin, but `nmcli`
+  itself receives them as a command‑line argument for a moment, so another user logged in to the Pi could glimpse it with `ps`. On a
+  single‑purpose counter that is normally just you.
+* After updating from an older version, run `sudo ./install.sh` again so the new permission is added.
 
 ## Counting each car once on a two‑way road
 At the entrance of a dead‑end street every car passes twice – arriving and leaving. Mount the sensor on one side of the road,
@@ -76,8 +95,10 @@ middle can still be missed or miscounted.
 * **Only one device should upload car counts to your website.** If another counter also uploads, turn its Website Sync off,
   otherwise its zero counts can overwrite the real ones.
 * **Security** – the page needs a password (user `admin`). Keep it on your home network; don't forward the port to the internet.
+* **Board on Ethernet, Pi on both?** Under *Crowd (phones)* → *Network connection to use*, choose the connection the board is on. The counter then sends its
+  requests out of that connection only. The same choice exists for the Falcon Player address.
 * Logs: *Log* tab, or `journalctl -u car-counter -u car-counter-web`. Services: `systemctl status car-counter car-counter-web`.
 * Settings and counts live in `/var/lib/car-counter` – back it up if you care about the history.
 
 ## Development
-`python3 -m unittest discover -s tests` (needs `php-cli`). The daemon is `counter/car_counter.py`; the web page is in `web/`.
+`python3 -m unittest tests.test_car_counter tests.test_people tests.test_standalone tests.test_wifi` (needs `php-cli`; the Wi‑Fi tests use a fake `nmcli` in `tests/fake_nmcli.py`). The daemon is `counter/car_counter.py`; the web page is in `web/`.

@@ -92,3 +92,48 @@ body #cc .help, body #cc .msg, body #cc .setup-txt { overflow-wrap: anywhere; }
   body #cc .row .b { flex: 1 1 auto; }
   body #cc .lane-step .b { flex: 1 1 100%; }
 }
+
+/* ---- Wi-Fi tab ---- */
+body #cc .row.between { justify-content: space-between; }
+body #cc .wifi-head { display: flex; align-items: center; gap: 1rem; }
+body #cc .wifi-ico { width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--edge); color: var(--muted); flex: 0 0 auto; }
+body #cc .wifi-ico.ok { background: var(--green-soft); color: var(--green); }
+body #cc .wifi-ico.warn { background: var(--amber-soft); color: var(--amber); }
+body #cc .wifi-state { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: .15rem; }
+body #cc .wifi-state b { font-size: 1.2rem; overflow-wrap: anywhere; }
+body #cc .wifi-state span { color: var(--muted); font-size: .9rem; }
+body #cc .switch { position: relative; display: inline-block; width: 56px; height: 32px; flex: 0 0 auto; }
+body #cc .switch input { opacity: 0; width: 100%; height: 100%; margin: 0; position: absolute; inset: 0; cursor: pointer; z-index: 1; }
+body #cc .switch .slider { position: absolute; inset: 0; background: var(--edge); border-radius: 999px; transition: background .15s; }
+body #cc .switch .slider::before { content: ""; position: absolute; left: 4px; top: 4px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .15s; }
+body #cc .switch input:checked + .slider { background: var(--green); }
+body #cc .switch input:checked + .slider::before { transform: translateX(24px); }
+body #cc .switch input:focus-visible + .slider { box-shadow: 0 0 0 3px rgba(27,127,75,.3); }
+body #cc .switch input:disabled { cursor: default; }
+body #cc .switch input:disabled + .slider { opacity: .5; }
+body #cc .wifi-list { margin-top: .6rem; }
+body #cc .wifi-net { border-top: 1px solid var(--edge); }
+body #cc .wifi-net:first-child { border-top: 0; }
+body #cc .wifi-row { width: 100%; display: flex; align-items: center; gap: .8rem; min-height: 56px; padding: .4rem .2rem; background: none; border: 0; color: var(--ink); font-size: 1.02rem; text-align: left; cursor: pointer; }
+body #cc .wifi-row.static { cursor: default; }
+body #cc .wifi-row:hover:not(.static) { background: var(--bg); }
+body #cc .wifi-name { flex: 1 1 auto; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+body #cc .wifi-net.in-use .wifi-name { color: var(--green); }
+body #cc .wifi-badges { flex: 0 0 auto; }
+body #cc .badge { font-size: .75rem; font-weight: 700; padding: .15rem .55rem; border-radius: 999px; background: var(--edge); color: var(--muted); }
+body #cc .badge.ok { background: var(--green-soft); color: var(--green); }
+body #cc .lock { flex: 0 0 1.4rem; text-align: center; font-size: .95rem; }
+body #cc .bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 20px; flex: 0 0 auto; }
+body #cc .bars i { display: block; width: 4px; border-radius: 1px; background: currentColor; opacity: .22; }
+body #cc .bars i:nth-child(1) { height: 6px; } body #cc .bars i:nth-child(2) { height: 10px; }
+body #cc .bars i:nth-child(3) { height: 14px; } body #cc .bars i:nth-child(4) { height: 18px; }
+body #cc .bars.l1 i:nth-child(-n+1), body #cc .bars.l2 i:nth-child(-n+2), body #cc .bars.l3 i:nth-child(-n+3), body #cc .bars.l4 i { opacity: 1; }
+body #cc .bars { color: var(--green); }
+body #cc .bars.l1 { color: var(--red); } body #cc .bars.l2 { color: var(--amber); }
+body #cc .wifi-form { padding: .2rem .2rem 1rem 2.1rem; display: flex; flex-direction: column; gap: .6rem; align-items: flex-start; }
+body #cc .wifi-form input[type=password], body #cc .wifi-form input[type=text] { width: 100%; max-width: 360px; box-sizing: border-box; }
+body #cc .wifi-form .row { margin: .2rem 0 0; }
+body #cc .wifi-form .help.warn { color: var(--amber); }
+body #cc .showpw { font-size: .9rem; color: var(--muted); display: inline-flex; align-items: center; gap: .4rem; }
+@media (max-width: 560px) { body #cc .wifi-form { padding-left: .2rem; } body #cc .wifi-form input[type=password] { max-width: 100%; } }
+body #cc .row.between .b { flex: 0 0 auto; }

@@ -15,6 +15,7 @@ import fcntl
 import glob
 import hashlib
 import hmac
+import http.client
 import io
 import json
 import logging
@@ -25,6 +26,7 @@ import random
 import re
 import select
 import signal
+import socket
 import sqlite3
 import ssl
 import sys
@@ -104,6 +106,7 @@ SCHEMA = {
     "clear_ms": ("int", 800, 100, 30000),
     "max_dwell_s": ("int", 120, 5, 3600),
     "schedule_mode": ("choice", "window", ["always", "window", "playing"]),
+    "fpp_interface": ("str", "", 15),                # network connection to reach the Falcon Player through ("" = automatic)
     "fpp_host": ("str", "", 120),                    # master Falcon Player to ask "is a show playing?"
     "window_start": ("time", "17:00"),
     "window_end": ("time", "22:00"),
@@ -119,6 +122,7 @@ SCHEMA = {
     # BaldrickSignals crowd board (counts phones/devices; reported separately from cars)
     "people_enabled": ("bool", False),
     "people_host": ("str", "", 120),                 # IP address or hostname of the board
+    "people_interface": ("str", "", 15),             # network connection to reach the board through ("" = automatic, or eth0 / wlan0 ...)
     "people_interval_min": ("int", 5, 1, 120),       # how often to check the board
     "people_clock": ("choice", "local", ["local", "utc"]),   # time zone of the timestamps in the board's CSV
     "people_time_col": ("int", 0, 0, 40),            # 0 = auto-detect (1 = first column)
@@ -235,6 +239,8 @@ def normalize_config(raw):
     cfg["wp_url"] = cfg["wp_url"].rstrip("/")
     cfg["people_host"] = normalize_board_host(cfg["people_host"])
     cfg["fpp_host"] = normalize_board_host(cfg["fpp_host"])
+    for key in ("people_interface", "fpp_interface"):
+        cfg[key] = normalize_iface(cfg[key])
     if cfg["schedule_mode"] == "playing" and not cfg["fpp_host"]:
         cfg["schedule_mode"] = "window"          # nothing to ask without the Falcon Player's address
     return cfg
@@ -638,6 +644,72 @@ class Store:
 
 
 # --------------------------------------------------------------------------
+# Choosing which network connection to use (Ethernet or Wi-Fi) for the board and the Falcon Player
+#
+# When the Pi is on both Ethernet and Wi-Fi, ordinary requests go wherever the routing table says, which is
+# often the wrong one for equipment that lives on the other network.  With an interface chosen, the request
+# is sent from that connection's own address and, where the system allows it, pinned to that connection.
+# --------------------------------------------------------------------------
+def normalize_iface(text):
+    """'eth0' -> 'eth0'.  Anything that is not a plain network-interface name becomes '' (automatic)."""
+    t = str(text or "").strip()
+    return t if re.match(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,14}$", t) else ""
+
+
+def iface_ipv4(name):
+    """The IPv4 address of a network interface, or '' if it has none (cable unplugged, Wi-Fi off...)."""
+    import struct
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        packed = fcntl.ioctl(sock.fileno(), 0x8915, struct.pack("256s", name.encode()[:15]))   # SIOCGIFADDR
+        return socket.inet_ntoa(packed[20:24])
+    except (OSError, UnicodeError):
+        return ""
+    finally:
+        sock.close()
+
+
+class _IfaceHTTPConnection(http.client.HTTPConnection):
+    iface = ""
+
+    def connect(self):
+        ip = iface_ipv4(self.iface)
+        if not ip:
+            raise OSError("the %s connection has no address - is it plugged in or switched on?" % self.iface)
+        last = OSError("no address found for %s" % self.host)
+        for fam, typ, proto, _, addr in socket.getaddrinfo(self.host, self.port, socket.AF_INET, socket.SOCK_STREAM):
+            sock = socket.socket(fam, typ, proto)
+            try:
+                sock.settimeout(self.timeout)
+                try:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, self.iface.encode() + b"\0")
+                except (OSError, AttributeError):
+                    pass                              # not allowed on this system; the source address below still steers it
+                sock.bind((ip, 0))
+                sock.connect(addr)
+                self.sock = sock
+                return
+            except OSError as exc:
+                last = exc
+                sock.close()
+        raise last
+
+
+def open_url(req, timeout, iface=""):
+    """urlopen(), optionally through one named network connection."""
+    iface = normalize_iface(iface)
+    if not iface:
+        return urllib.request.urlopen(req, timeout=timeout)
+    conn = type("IfaceConn", (_IfaceHTTPConnection,), {"iface": iface})
+
+    class Handler(urllib.request.HTTPHandler):
+        def http_open(self, request):
+            return self.do_open(conn, request)
+
+    return urllib.request.build_opener(Handler).open(req, timeout=timeout)
+
+
+# --------------------------------------------------------------------------
 # BaldrickSignals crowd board
 #
 # The board estimates how many phones/devices are nearby (every 30 s) and serves its history as
@@ -664,7 +736,7 @@ def board_urls(host, since=None):
     return ["http://%s/turnip_data_log/data?%s" % (host, q), "http://%s/csv" % host]
 
 
-def fetch_board_csv(host, since=None, timeout=12, max_bytes=16 << 20):
+def fetch_board_csv(host, since=None, timeout=12, max_bytes=16 << 20, iface=""):
     """Download the board's readings as CSV.  Returns (ok, text-or-error-message, url used)."""
     urls = board_urls(host, since)
     if not urls:
@@ -673,7 +745,7 @@ def fetch_board_csv(host, since=None, timeout=12, max_bytes=16 << 20):
     for url in urls:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/csv,text/plain,*/*"})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with open_url(req, timeout, iface) as resp:
                 raw = resp.read(max_bytes + 1)
         except urllib.error.HTTPError as exc:
             error = "The board answered HTTP %d for %s." % (exc.code, urllib.parse.urlsplit(url).path)
@@ -682,7 +754,8 @@ def fetch_board_csv(host, since=None, timeout=12, max_bytes=16 << 20):
             return False, error, url
         except (OSError, urllib.error.URLError, ValueError) as exc:
             reason = getattr(exc, "reason", exc)
-            return False, "Could not reach the board at %s (%s)." % (normalize_board_host(host), reason), url
+            via = (" using the %s connection" % normalize_iface(iface)) if normalize_iface(iface) else ""
+            return False, "Could not reach the board at %s%s (%s)." % (normalize_board_host(host), via, reason), url
         if len(raw) > max_bytes:
             raw = raw[-max_bytes:]                      # keep the newest part; the oldest rows are the least useful
             raw = raw[raw.find(b"\n") + 1:] if b"\n" in raw else raw
@@ -1308,6 +1381,7 @@ class Daemon:
             "people": {
                 "enabled": self.cfg["people_enabled"],
                 "host": self.cfg["people_host"],
+                "interface": self.cfg["people_interface"],
                 "interval_min": self.cfg["people_interval_min"],
                 "status": pinfo,
                 "today": self.people_today(sd) if self.cfg["people_enabled"] else None,
@@ -1324,7 +1398,7 @@ class Daemon:
         playing = False
         known = False
         try:
-            with urllib.request.urlopen("http://%s/api/fppd/status" % host, timeout=3) as resp:
+            with open_url("http://%s/api/fppd/status" % host, 3, self.cfg["fpp_interface"]) as resp:
                 data = json.loads(resp.read(1 << 18).decode("utf-8", "replace"))
             known = True
             playing = str(data.get("status_name", "")).lower() == "playing"
@@ -1357,7 +1431,7 @@ class Daemon:
             since = last_ts - 900                       # small overlap; duplicates are ignored
         else:
             since = now - max(c["sync_days"], 7) * 86400   # first check: catch up on the last week
-        ok, payload, url = fetch_board_csv(host, since)
+        ok, payload, url = fetch_board_csv(host, since, iface=c["people_interface"])
         info = self.people
         info["last_poll"] = int(now)
         if not ok:

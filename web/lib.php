@@ -24,6 +24,7 @@ function cc_schema() {
         'max_dwell_s'       => array('int', 120, array(5, 3600)),
         'schedule_mode'     => array('choice', 'window', array('always', 'window', 'playing')),
         'fpp_host'          => array('str', '', 120),
+        'fpp_interface'     => array('str', '', 15),
         'window_start'      => array('time', '17:00', null),
         'window_end'        => array('time', '22:00', null),
         'grace_min'         => array('int', 10, array(0, 240)),
@@ -37,6 +38,7 @@ function cc_schema() {
         'verify_tls'        => array('bool', true, null),
         'people_enabled'      => array('bool', false, null),
         'people_host'         => array('str', '', 120),
+        'people_interface'    => array('str', '', 15),
         'people_interval_min' => array('int', 5, array(1, 120)),
         'people_clock'        => array('choice', 'local', array('local', 'utc')),
         'people_time_col'     => array('int', 0, array(0, 40)),
@@ -51,6 +53,10 @@ function cc_coerce($key, $value) {
         $v = preg_replace('#^[a-zA-Z][a-zA-Z0-9+.-]*://#', '', trim((string)$value));
         $v = preg_split('#[/?]#', $v)[0];
         return preg_match('/^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?(:\d{1,5})?$/', $v) ? substr($v, 0, 120) : '';
+    }
+    if ($key === 'people_interface' || $key === 'fpp_interface') {   // a plain network name like eth0 or wlan0, or '' for automatic
+        $v = trim((string)$value);
+        return preg_match('/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,14}$/', $v) ? $v : '';
     }
     switch ($type) {
         case 'str':
@@ -197,6 +203,62 @@ function cc_service($op) {
     $sc = 'sudo -n ' . escapeshellarg(getenv('CC_SYSTEMCTL') ?: 'systemctl') . ' ' . escapeshellarg($op);
     exec($op === 'reboot' ? $sc . ' 2>&1' : $sc . ' car-counter 2>&1', $out);
     return implode("\n", $out) ?: 'Done';
+}
+
+/* Wi-Fi: everything goes through the root-owned helper (scripts/wifi_helper.py) via one narrow sudo rule made by
+ * install.sh.  Arguments are passed as an array (no shell), and the password goes in on stdin, never on a command line. */
+function cc_wifi_call($args, $stdin = null) {
+    $helper = getenv('CC_WIFI_HELPER') ?: dirname(__DIR__) . '/scripts/wifi_helper.py';
+    $cmd = (getenv('CC_WIFI_NOSUDO') === '1') ? array($helper) : array('sudo', '-n', $helper);   // NOSUDO: tests only
+    foreach ($args as $a) $cmd[] = (string)$a;
+    $p = @proc_open($cmd, array(0 => array('pipe', 'r'), 1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $pipes);
+    if (!is_resource($p)) return array('ok' => false, 'helper_missing' => true, 'error' => 'Could not start the Wi-Fi helper.');
+    if ($stdin !== null) fwrite($pipes[0], $stdin);
+    fclose($pipes[0]);
+    $out = stream_get_contents($pipes[1]); $err = stream_get_contents($pipes[2]);
+    fclose($pipes[1]); fclose($pipes[2]);
+    proc_close($p);
+    $j = json_decode((string)$out, true);
+    if (is_array($j)) return $j;
+    $why = (stripos($err, 'sudo') !== false || stripos($err, 'password') !== false || stripos($err, 'not allowed') !== false)
+        ? 'The web page is not allowed to change Wi-Fi yet. Run  sudo ./install.sh  again from the downloaded folder, then reload.'
+        : 'The Wi-Fi helper did not answer.';
+    return array('ok' => false, 'helper_missing' => true, 'error' => $why);
+}
+
+/* The Pi's network connections (Ethernet, Wi-Fi...) so the page can offer "use this one to reach the board". */
+function cc_ifaces() {
+    $ips = array();
+    foreach (array('/usr/sbin/ip', '/sbin/ip', '/usr/bin/ip', '/bin/ip') as $ipbin) {
+        if (!is_executable($ipbin)) continue;
+        $lines = array();
+        @exec(escapeshellarg($ipbin) . ' -4 -o addr show 2>/dev/null', $lines);
+        foreach ($lines as $l) {
+            if (preg_match('/^\d+:\s+(\S+)\s+inet\s+(\d+\.\d+\.\d+\.\d+)\//', $l, $m) && !isset($ips[$m[1]])) $ips[$m[1]] = $m[2];
+        }
+        break;
+    }
+    $out = array();
+    foreach (glob('/sys/class/net/*') ?: array() as $d) {
+        $n = basename($d);
+        if ($n === 'lo' || !preg_match('/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,14}$/', $n)) continue;
+        if (preg_match('/^(docker|veth|br-|virbr|ifb|dummy|sit\d|ip6tnl|tunl|gre)/', $n)) continue;
+        $wifi = is_dir($d . '/wireless') || is_dir($d . '/phy80211');
+        $out[] = array('name' => $n, 'kind' => $wifi ? 'wifi' : 'ethernet', 'ip' => $ips[$n] ?? '',
+                       'up' => trim((string)@file_get_contents($d . '/operstate')) === 'up');
+    }
+    usort($out, function ($a, $b) { return strcmp($a['kind'] . $a['name'], $b['kind'] . $b['name']); });   // ethernet before wifi
+    return $out;
+}
+
+/* Is this address inside a 192.168.1.50/24 style range? */
+function cc_in_subnet($addr, $cidr) {
+    if (strpos($cidr, '/') === false) return false;
+    list($net, $bits) = explode('/', $cidr, 2);
+    $a = ip2long($addr); $n = ip2long($net); $bits = (int)$bits;
+    if ($a === false || $n === false || $bits < 1 || $bits > 32) return false;
+    $mask = $bits === 32 ? -1 : ((-1 << (32 - $bits)) & 0xFFFFFFFF);
+    return (($a & $mask) === ($n & $mask));
 }
 
 function cc_tail($path, $lines = 150) {

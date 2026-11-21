@@ -13,7 +13,7 @@ function cc_out($data, $code = 200) {
     exit;
 }
 
-$mutating = array('save_config', 'command', 'service');
+$mutating = array('save_config', 'command', 'service', 'wifi_power', 'wifi_connect', 'wifi_forget');
 if (in_array($action, $mutating, true)) {
     // POST only, and only from our own page (a custom header cannot be set by a cross-site form).
     if (!$isPost || !isset($_SERVER['HTTP_X_REQUESTED_WITH'])) {
@@ -61,6 +61,44 @@ switch ($action) {
         $op = isset($body['op']) ? (string)$body['op'] : '';
         $res = cc_service($op);
         cc_out(array('ok' => true, 'output' => $res));
+
+    case 'ifaces':
+        cc_out(array('ifaces' => cc_ifaces()));
+
+    case 'wifi_status':
+        $r = cc_wifi_call(array('status'));
+        // Is this page being viewed over the Pi's Wi-Fi?  (then changing Wi-Fi can cut the page off).  Judged by the viewer's address
+        // sitting on the Wi-Fi adapter's network, or by the page having been opened at the Wi-Fi address itself.
+        $via = false;
+        if (!empty($r['ip'])) {
+            $via = (($_SERVER['SERVER_NAME'] ?? '') === $r['ip']) || (($_SERVER['SERVER_ADDR'] ?? '') === $r['ip'])
+                || (!empty($r['cidr']) && cc_in_subnet($_SERVER['REMOTE_ADDR'] ?? '', $r['cidr']));
+        }
+        $r['via_wifi'] = $via;
+        cc_out($r);
+
+    case 'wifi_scan':
+        cc_out(cc_wifi_call(array('scan', (($_REQUEST['rescan'] ?? '') === '1') ? 'yes' : 'no')));
+
+    case 'wifi_power':
+        cc_out(cc_wifi_call(array('power', !empty($body['on']) ? 'on' : 'off')));
+
+    case 'wifi_connect':
+        $ssid = $body['ssid'] ?? '';
+        if (!is_string($ssid) || $ssid === '') cc_out(array('ok' => false, 'error' => 'Choose a network first.'), 400);
+        $payload = array(
+            'ssid' => $ssid,
+            'password' => is_string($body['password'] ?? null) ? $body['password'] : '',
+            'security' => is_string($body['security'] ?? null) ? $body['security'] : 'wpa-psk',
+            'hidden' => !empty($body['hidden']),
+            'use_saved' => !empty($body['use_saved']),
+        );
+        cc_out(cc_wifi_call(array('connect'), json_encode($payload)));
+
+    case 'wifi_forget':
+        $ssid = $body['ssid'] ?? '';
+        if (!is_string($ssid) || $ssid === '') cc_out(array('ok' => false, 'error' => 'Choose a network first.'), 400);
+        cc_out(cc_wifi_call(array('forget'), json_encode(array('ssid' => $ssid))));
 
     case 'log':
         cc_out(array('log' => cc_tail(CC_LOG_FILE, 200), 'errors' => cc_tail(CC_ERR_FILE, 30)));

@@ -85,6 +85,7 @@ require_once __DIR__ . '/lib.php';
     <button data-tab="settings">Sensor &amp; Schedule</button>
     <button data-tab="people">Crowd (phones)</button>
     <button data-tab="website">Website Sync</button>
+    <button data-tab="wifi">Wi-Fi</button>
     <button data-tab="log">Log</button>
   </div>
 
@@ -202,6 +203,45 @@ require_once __DIR__ . '/lib.php';
     <div class="panel"><h3>Sync status</h3><div id="syncStatus" class="msg"></div></div>
   </div>
 
+  <!-- ===================== Wi-Fi ===================== -->
+  <div id="tab-wifi" style="display:none">
+    <div class="panel" id="wifiUnavailable" style="display:none">
+      <h3>Wi-Fi setup is not available here</h3>
+      <div class="help" id="wifiUnavailableMsg"></div>
+    </div>
+    <div id="wifiMain">
+      <div class="panel wifi-status">
+        <div class="wifi-head">
+          <div class="wifi-ico" id="wifiIco" aria-hidden="true"></div>
+          <div class="wifi-state"><b id="wifiTitle">Checking…</b><span id="wifiSub"></span></div>
+          <label class="switch" title="Turn Wi-Fi on or off"><input type="checkbox" id="wifiPower" aria-label="Wi-Fi on or off"><span class="slider"></span></label>
+        </div>
+        <div class="warnbox" id="wifiOffWarn" style="display:none">
+          You are probably using Wi-Fi to see this page, or this Pi has no network cable plugged in. If you turn Wi-Fi off, this page will stop working until you plug in Ethernet, or switch Wi-Fi back on at the Pi itself. Turn it off anyway?
+          <div class="row"><button class="b danger" id="wifiOffYes">Yes, turn Wi-Fi off</button><button class="b" id="wifiOffNo">Keep it on</button></div>
+        </div>
+        <div class="msg" id="wifiPowerMsg"></div>
+      </div>
+      <div class="panel" id="wifiProgress" style="display:none">
+        <h3 id="wifiProgTitle"></h3>
+        <div class="msg" id="wifiProgMsg" style="white-space:pre-line"></div>
+      </div>
+      <div class="panel">
+        <div class="row between"><h3 style="margin:0">Networks</h3><button class="b" id="wifiScan">Scan again</button></div>
+        <div id="wifiList" class="wifi-list"></div>
+        <div class="msg" id="wifiListMsg"></div>
+      </div>
+      <div class="panel">
+        <h3>Network not in the list?</h3>
+        <div class="help">Hidden networks do not show up in a scan. Type the name exactly as it is spelled, including capital letters.</div>
+        <div class="field"><label for="wifiHidSsid">Network name</label><div><input type="text" id="wifiHidSsid" maxlength="32" autocomplete="off" autocapitalize="off" spellcheck="false"></div></div>
+        <div class="field"><label for="wifiHidSec">Security</label><div><select id="wifiHidSec"><option value="wpa-psk">Password (WPA2 / WPA3)</option><option value="open">No password</option></select></div></div>
+        <div class="field" id="wifiHidPwRow"><label for="wifiHidPw">Password</label><div><input type="password" id="wifiHidPw" maxlength="64" autocomplete="off"></div></div>
+        <div class="row"><button class="b primary" id="wifiHidGo">Connect</button><span class="msg" id="wifiHidMsg"></span></div>
+      </div>
+    </div>
+  </div>
+
   <!-- ===================== Log ===================== -->
   <div id="tab-log" style="display:none">
     <div class="row">
@@ -238,7 +278,7 @@ require_once __DIR__ . '/lib.php';
   function pill(id, text, cls) { var e = $(id); e.textContent = text; e.className = 'pill ' + (cls || ''); }
 
   /* ---------- tabs ---------- */
-  var tabs = ['dash', 'settings', 'people', 'website', 'log'];
+  var tabs = ['dash', 'settings', 'people', 'website', 'wifi', 'log'];
   $('tabs').addEventListener('click', function (e) {
     var t = e.target.getAttribute && e.target.getAttribute('data-tab');
     if (!t) return;
@@ -247,6 +287,8 @@ require_once __DIR__ . '/lib.php';
     });
     Array.prototype.forEach.call($('tabs').children, function (b) { b.classList.toggle('active', b === e.target); });
     if (t === 'log') loadLog();
+    if (t === 'wifi') wifiOpen();
+    if (t === 'people' || t === 'settings') loadIfaces();
   });
 
   /* ---------- settings forms ---------- */
@@ -270,6 +312,7 @@ require_once __DIR__ . '/lib.php';
     fSched: [
       { k: 'schedule_mode', l: 'Count cars', t: 'select', o: [['window', 'During the show schedule (below)'], ['playing', 'Only while FPP is playing'], ['always', 'Always']], h: 'Detections outside the schedule are kept as “off-hours” so you can see them, but are not added to your totals.' },
       { k: 'fpp_host', l: 'Falcon Player address', t: 'text', h: 'Required for this mode: the IP address of your master Falcon Player, e.g. 192.168.1.50. If it cannot be reached the show schedule below is used instead.' },
+      { k: 'fpp_interface', l: 'Network connection to use', t: 'select', o: [['', 'Automatic (recommended)']], h: 'Only change this if the counter cannot reach your Falcon Player. Pick the connection (Ethernet or Wi-Fi) that the Falcon Player is on.' },
       { k: 'schedules', l: 'Show schedule', t: 'schedules', h: 'Used in “During the show schedule” mode, and as the backup when the Falcon Player cannot be reached. Add one entry per set of days with the same hours (e.g. Sun–Thu 5:30 PM–10:00 PM, and Fri–Sat 5:30 PM–11:00 PM). An end time earlier than the start time runs past midnight and counts as part of the day it started.' },
       { k: 'grace_min', l: 'Grace period (min)', t: 'number', h: '“Only while FPP is playing” mode: keep counting this long after the show stops.' },
       { k: 'rollover_hour', l: 'New night starts at', t: 'number', h: 'Hour (0–12). Cars counted after midnight still belong to the previous show night until this hour.' }
@@ -277,6 +320,7 @@ require_once __DIR__ . '/lib.php';
     fPeople: [
       { k: 'people_enabled', l: 'Use BaldrickSignals', t: 'checkbox' },
       { k: 'people_host', l: 'Board IP address', t: 'text', ph: '192.168.1.50', h: 'The address shown on the board’s web page (or baldrickboard.local). Give the board a fixed IP in your router so it does not change.' },
+      { k: 'people_interface', l: 'Network connection to use', t: 'select', o: [['', 'Automatic (recommended)']], h: 'Pick the connection your board is on. If the board is on your Ethernet network and the counter cannot find it, choose Ethernet here. Leave on Automatic if it already works.' },
       { k: 'people_interval_min', l: 'Check the board every (min)', t: 'number', h: 'How often to read the board. Each check only downloads the readings since the last check. Outside show hours it checks hourly.' },
       { k: 'people_clock', l: 'Board clock', t: 'select', o: [['local', 'Shows local time (same as this Pi)'], ['utc', 'Shows UTC']], h: 'Only matters if the board’s timestamps have no time zone. Use “Test board” to confirm the newest reading is about now.' },
       { k: 'people_time_col', l: 'Time column (advanced)', t: 'number', h: '0 = detect automatically. Otherwise the column number (1 = first) holding the timestamp.' },
@@ -362,7 +406,9 @@ require_once __DIR__ . '/lib.php';
   }
   function applyModeVisibility() {
     var f = $('schedField'); if (f) f.style.display = ($('cf_schedule_mode').value !== 'always') ? '' : 'none';
-    var h = $('row_fpp_host'); if (h) h.style.display = ($('cf_schedule_mode').value === 'playing') ? '' : 'none';
+    var pl = ($('cf_schedule_mode').value === 'playing') ? '' : 'none';
+    var h = $('row_fpp_host'); if (h) h.style.display = pl;
+    var hi = $('row_fpp_interface'); if (hi) hi.style.display = pl;
   }
   function buildForm(boxId) {
     var box = $(boxId);
@@ -419,6 +465,7 @@ require_once __DIR__ . '/lib.php';
       });
     });
     populateUsb();
+    populateIfaces();
     applyConnection();
     applyModeVisibility();
   }
@@ -741,6 +788,226 @@ require_once __DIR__ . '/lib.php';
     });
   };
 
+  // ---- Network connection choice (Ethernet / Wi-Fi) for the board and the Falcon Player ----
+  var ifaceList = [];
+  function ifaceLabel(i) {
+    return (i.kind === 'wifi' ? 'Wi-Fi' : 'Ethernet') + ' (' + i.name + ')' + (i.ip ? ' – ' + i.ip : (i.up ? '' : ' – not connected'));
+  }
+  function populateIfaces() {
+    ['people_interface', 'fpp_interface'].forEach(function (k) {
+      var sel = $('cf_' + k); if (!sel) return;
+      var cur = cfg ? (cfg[k] || '') : sel.value;
+      sel.textContent = '';
+      function opt(v, t) { var o = document.createElement('option'); o.value = v; o.textContent = t; sel.appendChild(o); }
+      opt('', 'Automatic (recommended)');
+      ifaceList.forEach(function (i) { opt(i.name, ifaceLabel(i)); });
+      if (cur && !ifaceList.some(function (i) { return i.name === cur; })) opt(cur, cur + ' (not found)');
+      sel.value = cur;
+    });
+  }
+  function loadIfaces() {
+    return api('ifaces').then(function (r) { ifaceList = r.ifaces || []; populateIfaces(); }).catch(function () {});
+  }
+
+  // ---- Wi-Fi tab --------------------------------------------------------------------------
+  var wifi = { st: null, nets: [], out: [], busy: false, poll: null, open: null, loaded: false };
+  var ICON_ON = '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2.5 9a14 14 0 0 1 19 0"/><path d="M5.8 12.6a9.4 9.4 0 0 1 12.4 0"/><path d="M9 16.2a4.8 4.8 0 0 1 6 0"/><circle cx="12" cy="19.6" r="1" fill="currentColor"/></svg>';
+  var ICON_OFF = '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2.5 9a14 14 0 0 1 19 0" opacity=".35"/><path d="M5.8 12.6a9.4 9.4 0 0 1 12.4 0" opacity=".35"/><path d="M9 16.2a4.8 4.8 0 0 1 6 0" opacity=".35"/><path d="M3 3l18 18"/></svg>';
+  function signalWord(n) { return n >= 67 ? 'excellent' : n >= 50 ? 'good' : n >= 30 ? 'fair' : 'weak'; }
+  function bars(n) {
+    var b = document.createElement('span'); b.className = 'bars l' + (n >= 67 ? 4 : n >= 50 ? 3 : n >= 30 ? 2 : 1);
+    b.title = 'Signal ' + n + '%'; for (var i = 0; i < 4; i++) b.appendChild(document.createElement('i'));
+    return b;
+  }
+  function showProgress(title, text, cls) {
+    $('wifiProgress').style.display = ''; $('wifiProgTitle').textContent = title;
+    var m = $('wifiProgMsg'); m.textContent = text || ''; m.className = 'msg' + (cls === 'ok' ? ' ok' : cls === 'bad' ? ' bad' : cls === 'warn' ? ' warn' : '');
+  }
+  function wifiRenderStatus() {
+    var st = wifi.st; if (!st) return;
+    var un = $('wifiUnavailable'), main = $('wifiMain');
+    if (!st.available) {
+      var why = st.reason === 'nmcli_missing' ? 'This page changes Wi-Fi through NetworkManager, and it is not installed on this system. You can still set Wi-Fi up with your system’s own tools (for example the network settings on the desktop, or the command  sudo nmtui ).'
+        : st.reason === 'nm_not_running' ? 'NetworkManager is not running, so this system manages Wi-Fi some other way. Use your system’s own network tools to join a network (for example  sudo nmtui  or the Raspberry Pi imager’s Wi-Fi settings).'
+        : (st.error || 'The Wi-Fi helper is not available.');
+      $('wifiUnavailableMsg').textContent = why; un.style.display = ''; main.style.display = 'none'; return;
+    }
+    un.style.display = 'none'; main.style.display = '';
+    if (!st.has_device) {
+      $('wifiIco').innerHTML = ICON_OFF; $('wifiIco').className = 'wifi-ico off';
+      $('wifiTitle').textContent = 'No Wi-Fi adapter found'; $('wifiSub').textContent = 'This board has no working Wi-Fi. Use the Ethernet port, or plug in a USB Wi-Fi adapter.';
+      $('wifiPower').disabled = true; $('wifiPower').checked = false; return;
+    }
+    var on = !!st.radio_on, conn = on && st.ip;
+    $('wifiIco').innerHTML = on ? ICON_ON : ICON_OFF; $('wifiIco').className = 'wifi-ico ' + (conn ? 'ok' : on ? 'warn' : 'off');
+    $('wifiTitle').textContent = !on ? 'Wi-Fi is off' : conn ? 'Connected to ' + (st.ssid || 'a network') : 'Not connected';
+    var sub = [];
+    if (conn) { sub.push('Address ' + st.ip); if (st.signal) sub.push('signal ' + signalWord(st.signal)); }
+    if (st.ethernet) sub.push('Ethernet cable is connected');
+    $('wifiSub').textContent = sub.join(' · ') || (on ? 'Pick a network below.' : 'Switch it on to join a network.');
+    $('wifiPower').disabled = wifi.busy; $('wifiPower').checked = on;
+  }
+  function wifiLoadStatus() {
+    return api('wifi_status').then(function (r) { wifi.st = r; wifiRenderStatus(); return r; }).catch(function () { return null; });
+  }
+  function wifiRenderList() {
+    var box = $('wifiList'); box.textContent = '';
+    var msg = $('wifiListMsg');
+    if (wifi.st && wifi.st.available && wifi.st.has_device && !wifi.st.radio_on) { setMsg(msg, 'Turn Wi-Fi on to see networks.', false); return; }
+    if (!wifi.nets.length) setMsg(msg, wifi.loaded ? 'No networks found. Move closer to your router and scan again.' : 'Scanning…', !wifi.loaded);
+    else setMsg(msg, '', true);
+    wifi.nets.forEach(function (n) {
+      var wrap = document.createElement('div'); wrap.className = 'wifi-net' + (n.in_use ? ' in-use' : '') + (wifi.open === n.ssid ? ' open' : '');
+      var row = document.createElement('button'); row.type = 'button'; row.className = 'wifi-row';
+      row.setAttribute('aria-expanded', wifi.open === n.ssid ? 'true' : 'false');
+      row.appendChild(bars(n.signal));
+      var nm = document.createElement('span'); nm.className = 'wifi-name'; nm.textContent = n.ssid; row.appendChild(nm);
+      var bd = document.createElement('span'); bd.className = 'wifi-badges';
+      if (n.in_use) { var b1 = document.createElement('span'); b1.className = 'badge ok'; b1.textContent = 'Connected'; bd.appendChild(b1); }
+      else if (n.saved) { var b2 = document.createElement('span'); b2.className = 'badge'; b2.textContent = 'Saved'; bd.appendChild(b2); }
+      row.appendChild(bd);
+      var lk = document.createElement('span'); lk.className = 'lock'; lk.title = n.secure ? 'Needs a password' : 'Open network';
+      lk.textContent = n.secure ? '🔒' : ''; row.appendChild(lk);
+      row.onclick = function () { wifi.open = (wifi.open === n.ssid) ? null : n.ssid; wifiRenderList(); };
+      wrap.appendChild(row);
+      if (wifi.open === n.ssid) wrap.appendChild(wifiForm(n));
+      box.appendChild(wrap);
+    });
+    (wifi.out || []).forEach(function (ssid) {
+      var wrap = document.createElement('div'); wrap.className = 'wifi-net';
+      var row = document.createElement('div'); row.className = 'wifi-row static';
+      var nm = document.createElement('span'); nm.className = 'wifi-name'; nm.textContent = ssid;
+      var bd = document.createElement('span'); bd.className = 'wifi-badges';
+      var b = document.createElement('span'); b.className = 'badge'; b.textContent = 'Saved – not in range'; bd.appendChild(b);
+      var fg = document.createElement('button'); fg.type = 'button'; fg.className = 'b'; fg.textContent = 'Forget'; fg.onclick = function () { wifiForget(ssid); };
+      row.appendChild(nm); row.appendChild(bd); row.appendChild(fg); wrap.appendChild(row); box.appendChild(wrap);
+    });
+  }
+  function wifiForm(n) {
+    var f = document.createElement('div'); f.className = 'wifi-form';
+    function note(t, cls) { var d = document.createElement('div'); d.className = 'help' + (cls ? ' ' + cls : ''); d.textContent = t; f.appendChild(d); return d; }
+    function btn(t, cls, fn) { var b = document.createElement('button'); b.type = 'button'; b.className = 'b ' + (cls || ''); b.textContent = t; b.onclick = fn; return b; }
+    var row = document.createElement('div'); row.className = 'row';
+    if (!n.supported) {
+      note(n.security === 'enterprise' ? 'This is a business or school network (it needs a username). It can’t be set up from this page.' : n.security === 'wep' ? 'This network uses an old, insecure security type (WEP) that isn’t supported here.' : 'This kind of network isn’t supported here.');
+    } else if (n.in_use) {
+      note('You are connected to this network.');
+      if (n.saved) { row.appendChild(btn('Forget this network', 'danger', function () { wifiForget(n.ssid); })); f.appendChild(row); }
+    } else if (n.saved) {
+      note('The password for this network is already saved.');
+      row.appendChild(btn('Connect', 'primary', function () { startConnect({ ssid: n.ssid, security: n.security, use_saved: true }); }));
+      row.appendChild(btn('Forget', 'danger', function () { wifiForget(n.ssid); })); f.appendChild(row);
+    } else if (n.secure) {
+      var pw = document.createElement('input'); pw.type = 'password'; pw.placeholder = 'Network password'; pw.autocomplete = 'off'; pw.maxLength = 64;
+      var show = document.createElement('label'); show.className = 'showpw';
+      var cb = document.createElement('input'); cb.type = 'checkbox'; cb.onchange = function () { pw.type = cb.checked ? 'text' : 'password'; };
+      show.appendChild(cb); show.appendChild(document.createTextNode(' Show password'));
+      var go = btn('Connect', 'primary', function () { startConnect({ ssid: n.ssid, security: n.security, password: pw.value }); });
+      go.disabled = true;
+      pw.oninput = function () { go.disabled = pw.value.length < 8; };
+      pw.onkeydown = function (e) { if (e.key === 'Enter' && !go.disabled) go.click(); };
+      f.appendChild(pw); f.appendChild(show); row.appendChild(go); f.appendChild(row);
+      note('A Wi-Fi password is 8 to 63 characters.');
+    } else {
+      note('This is an open network: it has no password, so others nearby could read what is sent over it.', 'warn');
+      row.appendChild(btn('Connect anyway', 'primary', function () { startConnect({ ssid: n.ssid, security: 'open' }); })); f.appendChild(row);
+    }
+    return f;
+  }
+  function wifiScan(rescan) {
+    var b = $('wifiScan'); b.disabled = true; b.textContent = 'Scanning…';
+    if (rescan) setMsg($('wifiListMsg'), 'Looking for networks… this can take several seconds.', true);
+    return api(rescan ? 'wifi_scan&rescan=1' : 'wifi_scan').then(function (r) {
+      wifi.loaded = true;
+      if (r.ok) { wifi.nets = r.networks || []; wifi.out = r.saved_out_of_range || []; wifiRenderList(); }
+      else { wifi.nets = []; wifi.out = []; wifiRenderList(); if (!(wifi.st && !wifi.st.radio_on)) setMsg($('wifiListMsg'), r.error || 'Scan failed.', false); }
+    }).catch(function () { setMsg($('wifiListMsg'), 'Could not reach the Pi.', false); })
+      .then(function () { b.disabled = false; b.textContent = 'Scan again'; });
+  }
+  function wifiOpen() {
+    wifiLoadStatus().then(function (st) {
+      if (st && st.available && st.has_device && st.radio_on) wifiScan(!wifi.loaded);
+      else wifiRenderList();
+    });
+  }
+  function wifiRisky() { var s = wifi.st; return !!(s && s.radio_on && (s.via_wifi || !s.ethernet)); }
+  function wifiSetPower(on) {
+    var pm = $('wifiPowerMsg'); $('wifiPower').disabled = true; wifi.busy = true;
+    setMsg(pm, on ? 'Turning Wi-Fi on…' : 'Turning Wi-Fi off…', true);
+    return api('wifi_power', { on: on }).then(function (r) {
+      wifi.busy = false;
+      if (!r.ok) { setMsg(pm, r.error || 'Could not change Wi-Fi.', false); return wifiLoadStatus(); }
+      setMsg(pm, on ? 'Wi-Fi is on.' : 'Wi-Fi is off.', true);
+      wifi.nets = []; wifi.out = []; wifi.loaded = false;
+      return wifiLoadStatus().then(function () { if (on) { wifiRenderList(); setTimeout(function () { wifiScan(true); }, 1500); } else wifiRenderList(); });
+    }).catch(function () {
+      wifi.busy = false;
+      setMsg(pm, on ? 'Lost contact with the Pi. Reload in a moment.' : 'Wi-Fi was switched off and this page lost contact with the Pi. Plug in Ethernet or switch Wi-Fi back on at the Pi.', false);
+    });
+  }
+  $('wifiPower').onchange = function () {
+    var want = this.checked;
+    if (!want && wifiRisky()) { this.checked = true; $('wifiOffWarn').style.display = ''; return; }
+    $('wifiOffWarn').style.display = 'none'; wifiSetPower(want);
+  };
+  $('wifiOffYes').onclick = function () { $('wifiOffWarn').style.display = 'none'; wifiSetPower(false); };
+  $('wifiOffNo').onclick = function () { $('wifiOffWarn').style.display = 'none'; };
+  $('wifiScan').onclick = function () { wifiScan(true); };
+  function wifiForget(ssid) {
+    setMsg($('wifiListMsg'), 'Forgetting ' + ssid + '…', true);
+    api('wifi_forget', { ssid: ssid }).then(function (r) {
+      setMsg($('wifiListMsg'), r.ok ? 'Forgot ' + ssid + '.' : (r.error || 'Could not forget it.'), r.ok);
+      wifi.open = null; return wifiLoadStatus().then(function () { return wifiScan(false); });
+    }).catch(function () { setMsg($('wifiListMsg'), 'Could not reach the Pi.', false); });
+  }
+  function startConnect(p) {
+    if (wifi.busy) return;
+    wifi.busy = true; $('wifiPower').disabled = true;
+    var prevTs = (wifi.st && wifi.st.result) ? wifi.st.result.ts : 0;
+    var viaWifi = !!(wifi.st && wifi.st.via_wifi);
+    showProgress('Connecting to ' + p.ssid + '…', 'This can take up to a minute.' + (viaWifi
+      ? '\nYou are viewing this page over Wi-Fi, so it may disconnect while the Pi switches networks. If it does, join the same network on your phone or computer, then open this page at the Pi’s new address (your router’s device list shows it, or run  hostname -I  on the Pi). The result will be shown here.'
+      : ''), 'warn');
+    function poll(t0, lost) {
+      clearTimeout(wifi.poll);
+      wifi.poll = setTimeout(function () {
+        api('wifi_status').then(function (st) {
+          wifi.st = st; wifiRenderStatus();
+          var r = st.result;
+          if (r && r.ts !== prevTs && r.ssid === p.ssid && r.state === 'ok') {
+            wifi.busy = false; wifiRenderStatus();
+            showProgress('Connected to ' + p.ssid, 'The Pi’s address on this network is ' + (r.ip || 'unknown') + '.' + (viaWifi && r.ip ? '\nIf this page stops responding, open  http://' + r.ip + '/  instead.' : ''), 'ok');
+            wifi.open = null; wifiScan(false); return;
+          }
+          if (r && r.ts !== prevTs && r.ssid === p.ssid && r.state === 'failed') {
+            wifi.busy = false; wifiRenderStatus();
+            showProgress('Could not connect to ' + p.ssid, (r.message || 'Check the password and try again.') + '\nThe Pi went back to its previous network if it could.', 'bad');
+            wifiScan(false); return;
+          }
+          if (Date.now() - t0 > 180000) { wifi.busy = false; wifiRenderStatus(); showProgress('Still waiting…', 'The Pi has not reported back. Reload this page; if it is unreachable, check the Pi’s network at its own screen or cable.', 'bad'); return; }
+          poll(t0, false);
+        }).catch(function () {
+          if (Date.now() - t0 > 300000) { wifi.busy = false; wifiRenderStatus(); showProgress('Lost contact with the Pi', 'Join the same network as the Pi on this device, then reload and open the Pi’s new address.', 'bad'); return; }
+          showProgress('Connecting to ' + p.ssid + '…', 'Lost contact with the Pi. That is normal while it moves to another network.\nJoin the same network on this device and open the Pi’s new address; this page keeps trying.', 'warn');
+          poll(t0, true);
+        });
+      }, 2000);
+    }
+    var t0 = Date.now();
+    api('wifi_connect', p).then(function (r) {
+      if (!r.ok) { wifi.busy = false; wifiRenderStatus(); showProgress('Could not start', r.error || 'Something went wrong.', 'bad'); return; }
+      poll(t0, false);
+    }).catch(function () { poll(t0, true); });
+  }
+  $('wifiHidSec').onchange = function () { $('wifiHidPwRow').style.display = this.value === 'open' ? 'none' : ''; };
+  $('wifiHidGo').onclick = function () {
+    var ssid = $('wifiHidSsid').value, sec = $('wifiHidSec').value, pw = $('wifiHidPw').value, m = $('wifiHidMsg');
+    if (!ssid) { setMsg(m, 'Type the network name.', false); return; }
+    if (sec !== 'open' && (pw.length < 8 || pw.length > 64)) { setMsg(m, 'A Wi-Fi password is 8 to 63 characters.', false); return; }
+    setMsg(m, '', true);
+    startConnect({ ssid: ssid, security: sec === 'open' ? 'open' : 'wpa-psk', password: sec === 'open' ? '' : pw, hidden: true });
+  };
+
   function refresh() {
     return api('status').then(function (r) { running = r.running; status = r.status; renderStatus(); renderStats(); renderSetup(); }).catch(function () {
       running = false; renderStatus();
@@ -750,6 +1017,7 @@ require_once __DIR__ . '/lib.php';
 
   $('csvLink').href = AJAX + '&action=csv';
   api('config').then(function (c) { cfg = c; fillForms(); renderSetup(); });
+  loadIfaces();
   api('ports').then(function (p) {
     portInfo = p; dl.textContent = '';
     renderUart(); renderSetup();
