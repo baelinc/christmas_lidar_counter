@@ -117,6 +117,7 @@ SCHEMA = {
     "secret": ("str", "", 200),
     "sync_time": ("time", "23:00"),
     "sync_days": ("int", 7, 1, 60),
+    "sync_only_if_played": ("bool", False),          # skip nights when the Falcon Player (fpp_host) never played a show
     "live_interval_min": ("int", 0, 0, 240),
     "verify_tls": ("bool", True),
     # BaldrickSignals crowd board (counts phones/devices; reported separately from cars)
@@ -1072,6 +1073,8 @@ class Daemon:
         self.last_result = None        # last command result (for the UI)
 
         self.lock = threading.Lock()   # guards the shared dict below
+        self.fpp_days = {}                  # show date -> "seen" | "played" (cache of meta fpp_day_<date>)
+        self.sync_skipped = []              # nights left out of the last upload because no show was played
         self.shared = {"fpp_playing": False, "fpp_last_playing": 0.0, "fpp_known": False,
                        "sync": {}, "warnings": []}
         self.sync_q = queue.Queue()
@@ -1409,6 +1412,36 @@ class Daemon:
             self.shared["fpp_playing"] = playing
             if playing:
                 self.shared["fpp_last_playing"] = time.time()
+        self.note_fpp_day(known, playing)
+
+    # ---- did the Falcon Player run a show on a given night? ---------------
+    def note_fpp_day(self, known, playing):
+        """Remember, per show night, whether the Falcon Player was reachable ("seen") and whether it played ("played")."""
+        if not known:
+            return
+        sd = show_date_for(datetime.datetime.now(), self.cfg["rollover_hour"])
+        cache = self.fpp_days
+        cur = cache.get(sd)
+        if cur is None:
+            cur = cache[sd] = self.store.meta_get("fpp_day_" + sd, "")
+        new = "played" if (playing or cur == "played") else "seen"
+        if new != cur:
+            cache[sd] = new
+            self.store.meta_set("fpp_day_" + sd, new)
+            log.info("Falcon Player on %s: %s", sd, "a show was played" if new == "played" else "reachable, no show yet")
+        if len(cache) > 20:
+            for k in sorted(cache)[:-10]:
+                cache.pop(k, None)
+
+    def fpp_day_state(self, sd):
+        """'played' | 'seen' (reachable, never playing) | 'unknown' (no record - counter off, or Falcon Player unreachable)."""
+        v = self.fpp_days.get(sd)
+        if v is None:
+            v = self.store.meta_get("fpp_day_" + sd, "")
+        return v or "unknown"
+
+    def only_played_nights(self):
+        return bool(self.cfg["sync_only_if_played"] and self.cfg["fpp_host"])
 
     # ---- BaldrickSignals crowd board -------------------------------------
     def row_counted(self, dt):
@@ -1548,21 +1581,37 @@ class Daemon:
         days_back = 1 if live else self.cfg["sync_days"]
         sd_today = show_date_for(datetime.datetime.now(), self.cfg["rollover_hour"])
         since = (datetime.date.fromisoformat(sd_today) - datetime.timedelta(days=days_back - 1)).isoformat()
+        days = self.with_people(self.store.days(since), since)
+        self.sync_skipped = []
+        if self.only_played_nights():
+            # Drop only nights we KNOW had no show: the Falcon Player was reachable but never played.  Nights with no
+            # record (counter was off, Falcon Player unreachable) are still sent, and so are nights where cars were
+            # counted in "only while playing" mode, which proves the show ran.
+            keep = []
+            for d in days:
+                proven = self.cfg["schedule_mode"] == "playing" and d.get("total", 0) > 0
+                if self.fpp_day_state(d["date"]) == "seen" and not proven:
+                    self.sync_skipped.append(d["date"])
+                else:
+                    keep.append(d)
+            days = keep
         return {
             "v": 1,
             "live": bool(live),
             "show_name": self.cfg["show_name"],
             "plugin_version": VERSION,
             "sent_at": int(time.time()),
-            "days": self.with_people(self.store.days(since), since),
+            "days": days,
         }
 
-    def record_sync(self, ok, message, kind, data=None):
+    def record_sync(self, ok, message, kind, data=None, skipped=False):
         info = {"ts": int(time.time()), "last_ok": bool(ok), "message": message, "kind": kind}
+        if skipped:
+            info["skipped"] = True                    # nothing was sent, so "last upload" stays as it was
         if ok and isinstance(data, dict):
             info["received"] = data.get("received")
             info["season_total"] = data.get("season_total")
-        if ok:
+        if ok and not skipped:
             info["last_ok_ts"] = info["ts"]
         else:
             with self.lock:
@@ -1581,12 +1630,22 @@ class Daemon:
                 self.people_poll("pre-upload")      # pick up the newest readings before sending
             except Exception:
                 log.exception("Crowd board poll before upload failed")
-        ok, msg, data = post_signed(c["wp_url"], "ingest", self.build_payload(live),
-                                    c["secret"], c["verify_tls"])
+        payload = self.build_payload(live)
+        skipped = list(self.sync_skipped)
+        if self.only_played_nights() and not payload["days"]:
+            if live:
+                return True, "No show has played on the Falcon Player tonight."
+            msg = "Nothing uploaded: the Falcon Player did not play a show on %s." % (
+                ", ".join(skipped[-3:]) if skipped else "these nights")
+            self.record_sync(True, msg, kind, skipped=True)
+            log.info("Website sync (%s) skipped: %s", kind, msg)
+            return True, msg
+        ok, msg, data = post_signed(c["wp_url"], "ingest", payload, c["secret"], c["verify_tls"])
         self.record_sync(ok, "Uploaded OK" if ok else msg, kind, data)
         if ok:
             log.info("Website sync (%s) ok: %s", kind, data.get("received") if data else "")
-            return True, "Uploaded %s night(s) to the website." % (data or {}).get("received", "?")
+            extra = " (left out %d night(s) with no show on the Falcon Player)" % len(skipped) if skipped else ""
+            return True, "Uploaded %s night(s) to the website.%s" % ((data or {}).get("received", "?"), extra)
         log.warning("Website sync (%s) failed: %s", kind, msg)
         return False, msg
 

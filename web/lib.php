@@ -34,6 +34,7 @@ function cc_schema() {
         'secret'            => array('str', '', 200),
         'sync_time'         => array('time', '23:00', null),
         'sync_days'         => array('int', 7, array(1, 60)),
+        'sync_only_if_played' => array('bool', false, null),
         'live_interval_min' => array('int', 0, array(0, 240)),
         'verify_tls'        => array('bool', true, null),
         'people_enabled'      => array('bool', false, null),

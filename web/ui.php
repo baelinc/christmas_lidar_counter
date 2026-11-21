@@ -331,6 +331,7 @@ require_once __DIR__ . '/lib.php';
       { k: 'wp_url', l: 'Website address', t: 'text', ph: 'https://www.example.com', h: 'Just the site address – no /wp-json path.' },
       { k: 'secret', l: 'Shared secret', t: 'password', h: 'Copied from the WordPress plugin settings.' },
       { k: 'sync_time', l: 'Nightly upload time', t: 'time', h: 'Choose a time after your show ends. If the Pi was off or the site was down it catches up automatically.' },
+      { k: 'sync_only_if_played', l: 'Only upload nights with a show', t: 'checkbox', h: 'Skips nights when your Falcon Player did not play a show, so the website only shows real show nights. Needs your Falcon Player’s address. Nights the counter has no record for (it was off, or the Falcon Player could not be reached) are still uploaded.' },
       { k: 'sync_days', l: 'Nights to include', t: 'number', h: 'Each upload re-sends the last N nights so a missed night heals itself.' },
       { k: 'live_interval_min', l: 'Live update every (min)', t: 'number', h: '0 = nightly only. Set e.g. 10 to let the website show tonight’s count while the show is running.' },
       { k: 'verify_tls', l: 'Verify HTTPS certificate', t: 'checkbox', h: 'Leave on unless your site uses a self-signed certificate.' }
@@ -406,9 +407,12 @@ require_once __DIR__ . '/lib.php';
   }
   function applyModeVisibility() {
     var f = $('schedField'); if (f) f.style.display = ($('cf_schedule_mode').value !== 'always') ? '' : 'none';
-    var pl = ($('cf_schedule_mode').value === 'playing') ? '' : 'none';
+    var needFpp = ($('cf_schedule_mode').value === 'playing') || !!($('cf_sync_only_if_played') && $('cf_sync_only_if_played').checked);
+    var pl = needFpp ? '' : 'none';
     var h = $('row_fpp_host'); if (h) h.style.display = pl;
     var hi = $('row_fpp_interface'); if (hi) hi.style.display = pl;
+    var w = $('fppNeeded');
+    if (w) w.style.display = ($('cf_sync_only_if_played').checked && !($('cf_fpp_host').value || '').trim()) ? '' : 'none';
   }
   function buildForm(boxId) {
     var box = $(boxId);
@@ -450,6 +454,15 @@ require_once __DIR__ . '/lib.php';
   }
   ['fSensor', 'fDetect', 'fSched', 'fPeople', 'fWebsite'].forEach(buildForm);
   $('cf_schedule_mode').addEventListener('change', applyModeVisibility);
+  $('cf_sync_only_if_played').addEventListener('change', applyModeVisibility);
+  $('cf_fpp_host').addEventListener('input', applyModeVisibility);
+  (function () {
+    var n = document.createElement('div'); n.id = 'fppNeeded'; n.className = 'msg warn'; n.style.display = 'none';
+    n.appendChild(document.createTextNode('Enter your Falcon Player’s address first: '));
+    var go = document.createElement('button'); go.type = 'button'; go.className = 'b'; go.textContent = 'Open Sensor & Schedule';
+    go.onclick = function () { gotoTab('settings'); var r = $('row_fpp_host'); if (r && r.scrollIntoView) r.scrollIntoView(); };
+    n.appendChild(go); $('row_sync_only_if_played').lastChild.appendChild(n);
+  })();
   $('cf_connection').addEventListener('change', applyConnection);
   (function () { var n = document.createElement('div'); n.id = 'usbDetected'; n.className = 'msg'; $('row_usb_device').lastChild.appendChild(n); })();
   var dl = document.createElement('datalist'); dl.id = 'ccPorts'; $('cc').appendChild(dl);
@@ -643,7 +656,7 @@ require_once __DIR__ . '/lib.php';
     renderPeople(s);
 
     var sy2 = s.sync || {};
-    var txt = sy2.ts ? ('Last attempt ' + fmtTime(sy2.ts) + ' – ' + (sy2.last_ok ? 'OK' : 'FAILED') + ': ' + sy2.message) : 'No upload attempted yet.';
+    var txt = sy2.ts ? ('Last attempt ' + fmtTime(sy2.ts) + ' – ' + (sy2.skipped ? 'nothing to send' : sy2.last_ok ? 'OK' : 'FAILED') + ': ' + sy2.message) : 'No upload attempted yet.';
     if (sy2.last_ok_ts) txt += '  Last successful upload: ' + fmtTime(sy2.last_ok_ts) + '.';
     $('syncStatus').textContent = txt;
     $('syncStatus').className = 'msg' + (sy2.ts ? (sy2.last_ok ? ' ok' : ' bad') : '');

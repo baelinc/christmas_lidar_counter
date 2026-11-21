@@ -112,6 +112,111 @@ class PollFppTests(unittest.TestCase):
         self.assertFalse(self.d.shared["fpp_known"])
 
 
+class OnlyPlayedUploadTests(unittest.TestCase):
+    """'Only upload nights with a show': skip nights the Falcon Player was reachable but never played."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        os.environ["CC_DATA_DIR"] = os.path.join(self.dir, "data")
+        os.environ["CC_RUN_DIR"] = os.path.join(self.dir, "run")
+        os.environ["CC_LOG_FILE"] = os.path.join(self.dir, "log", "c.log")
+        self.paths = cc.get_paths()
+        for p in (self.paths["data"], self.paths["run"], self.paths["cmd"]):
+            os.makedirs(p, exist_ok=True)
+        self.fpp = FakeFpp()
+        self.write_cfg()
+        self.d = cc.Daemon(self.paths)
+        today = datetime.date.today()
+        self.days = [(today - datetime.timedelta(days=n)).isoformat() for n in (3, 2, 1, 0)]     # oldest first
+        for sd in self.days:
+            self.d.store.add_event(time.time(), sd, 19, 1, "car")
+
+    def write_cfg(self, **kw):
+        cfg = {"schedule_mode": "window", "fpp_host": self.fpp.host, "sync_only_if_played": True, "sync_days": 7, "rollover_hour": 0}
+        cfg.update(kw)
+        cc.atomic_write_json(self.paths["config"], cfg, 0o600)
+
+    def tearDown(self):
+        self.fpp.close()
+        shutil.rmtree(self.dir)
+        for k in ("CC_DATA_DIR", "CC_RUN_DIR", "CC_LOG_FILE"):
+            os.environ.pop(k, None)
+
+    def dates(self):
+        return [x["date"] for x in self.d.build_payload(False)["days"]]
+
+    def mark(self, sd, state):
+        self.d.fpp_days[sd] = state
+        self.d.store.meta_set("fpp_day_" + sd, state)
+
+    def test_polling_records_seen_then_played(self):
+        sd = cc.show_date_for(datetime.datetime.now(), 0)
+        self.fpp.status = "idle"
+        self.d.poll_fpp()
+        self.assertEqual(self.d.fpp_day_state(sd), "seen")
+        self.fpp.status = "playing"
+        self.d.poll_fpp()
+        self.assertEqual(self.d.fpp_day_state(sd), "played")
+        self.fpp.status = "idle"
+        self.d.poll_fpp()
+        self.assertEqual(self.d.fpp_day_state(sd), "played")            # stays played for the whole night
+        self.assertEqual(self.d.store.meta_get("fpp_day_" + sd), "played")   # and survives a restart
+
+    def test_unreachable_fpp_records_nothing(self):
+        self.fpp.close()
+        self.d.poll_fpp()
+        self.assertEqual(self.d.fpp_day_state(self.days[-1]), "unknown")
+
+    def test_nights_without_a_show_are_left_out(self):
+        self.mark(self.days[0], "played")
+        self.mark(self.days[1], "seen")                                  # reachable, never played -> skip
+        # days[2] has no record -> still sent;  days[3] played
+        self.mark(self.days[3], "played")
+        got = self.dates()
+        self.assertNotIn(self.days[1], got)
+        for keep in (self.days[0], self.days[2], self.days[3]):
+            self.assertIn(keep, got)
+        self.assertEqual(self.d.sync_skipped, [self.days[1]])
+
+    def test_off_by_default_and_needs_an_address(self):
+        for sd in self.days:
+            self.mark(sd, "seen")
+        self.write_cfg(sync_only_if_played=False); self.d.cfg.reload_if_changed()
+        self.assertEqual(len(self.dates()), 4)
+        self.write_cfg(fpp_host="", sync_only_if_played=True); self.d.cfg.reload_if_changed()
+        self.assertEqual(len(self.dates()), 4)                           # no address -> cannot know -> send everything
+
+    def test_playing_mode_cars_prove_the_show_ran(self):
+        self.write_cfg(schedule_mode="playing"); self.d.cfg.reload_if_changed()
+        self.mark(self.days[1], "seen")                                  # looks idle, but cars were counted (only counted while playing)
+        self.assertIn(self.days[1], self.dates())
+
+    def test_nothing_to_send_is_not_an_error(self):
+        for sd in self.days:
+            self.mark(sd, "seen")
+        sent = []
+        orig = cc.post_signed
+        cc.post_signed = lambda *a, **k: (sent.append(a) or (True, "", {"received": 1}))
+        self.addCleanup(setattr, cc, "post_signed", orig)
+        self.write_cfg(wp_url="https://example.com", secret="s3cret"); self.d.cfg.reload_if_changed()
+        ok, msg = self.d.do_sync(False, "nightly")
+        self.assertTrue(ok); self.assertIn("did not play a show", msg)
+        self.assertEqual(sent, [])                                       # nothing was posted
+        info = self.d.shared["sync"]
+        self.assertTrue(info["skipped"]); self.assertIsNone(info.get("last_ok_ts"))      # "last successful upload" is unchanged
+        ok, msg = self.d.do_sync(True, "live")                           # live updates stay silent
+        self.assertTrue(ok); self.assertEqual(sent, [])
+
+    def test_partial_upload_says_what_was_left_out(self):
+        self.mark(self.days[1], "seen")
+        orig = cc.post_signed
+        cc.post_signed = lambda *a, **k: (True, "", {"received": 3})
+        self.addCleanup(setattr, cc, "post_signed", orig)
+        self.write_cfg(wp_url="https://example.com", secret="s3cret"); self.d.cfg.reload_if_changed()
+        ok, msg = self.d.do_sync(False, "manual")
+        self.assertTrue(ok); self.assertIn("left out 1 night", msg)
+
+
 class UartTests(unittest.TestCase):
     """The GPIO serial port: set up automatically, safe to repeat, and the page can tell whether a restart is still needed."""
 

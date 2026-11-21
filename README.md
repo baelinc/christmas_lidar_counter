@@ -97,6 +97,9 @@ middle can still be missed or miscounted.
 * **Security** – the page needs a password (user `admin`). Keep it on your home network; don't forward the port to the internet.
 * **Board on Ethernet, Pi on both?** Under *Crowd (phones)* → *Network connection to use*, choose the connection the board is on. The counter then sends its
   requests out of that connection only. The same choice exists for the Falcon Player address.
+* **Only upload show nights.** *Website Sync* → *Only upload nights with a show* skips any night when your Falcon Player was reachable but never played.
+  It needs the Falcon Player's address. Nights the counter has no record for (it was off, or the Falcon Player could not be reached) are still uploaded,
+  so nothing is lost by mistake, and nights already on your website are not removed. Turning it on later does not hide old nights.
 * Logs: *Log* tab, or `journalctl -u car-counter -u car-counter-web`. Services: `systemctl status car-counter car-counter-web`.
 * Settings and counts live in `/var/lib/car-counter` – back it up if you care about the history.
 
