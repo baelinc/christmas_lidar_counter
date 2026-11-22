@@ -1,5 +1,7 @@
 # Christmas Lidar Counter
 
+<p align="center"><img src="web/img/logo.png" width="140" alt="Christmas Lidar Counter logo"></p>
+
 Counts the cars that visit your Christmas light display with a **TFmini / TFmini‑S / TFmini Plus / TF‑Luna** lidar on a
 Raspberry Pi, keeps nightly and hourly totals, and uploads them to your WordPress site
 (companion plugin: [*Light Show Car Counter*](https://github.com/baelinc/lidar_counter_wp)). It has its own friendly,

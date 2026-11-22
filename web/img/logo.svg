@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Christmas on the Hill car counter">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0f2a4a"/><stop offset="1" stop-color="#1d4a73"/></linearGradient>
+    <linearGradient id="hill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2f7d4f"/><stop offset="1" stop-color="#1b5233"/></linearGradient>
+    <radialGradient id="glow" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#ffe9a8" stop-opacity=".9"/><stop offset="1" stop-color="#ffe9a8" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="128" height="128" rx="26" fill="url(#sky)"/>
+  <!-- stars -->
+  <g fill="#fff" opacity=".85"><circle cx="20" cy="22" r="1.4"/><circle cx="104" cy="16" r="1.2"/><circle cx="34" cy="40" r="1"/><circle cx="112" cy="46" r="1.3"/><circle cx="14" cy="58" r="1"/></g>
+  <g transform="translate(64 96) scale(.86) translate(-64 -96)">
+  <!-- star on top of the tree -->
+  <circle cx="64" cy="24" r="14" fill="url(#glow)"/>
+  <path d="M64 13l2.9 6.2 6.8.8-5 4.7 1.3 6.7L64 28l-6 3.4 1.3-6.7-5-4.7 6.8-.8z" fill="#ffd54a"/>
+  <!-- tree with lights -->
+  <path d="M64 28L44 56h9L38 78h12L32 100h64L78 78h12L75 56h9z" fill="#1f6b43"/>
+  <path d="M40 86q24 -12 48 0M46 68q18 -9 36 0M52 51q12 -6 24 0" fill="none" stroke="#fff" stroke-opacity=".25" stroke-width="1.5"/>
+  <g>
+    <circle cx="51" cy="80" r="2.6" fill="#ff4b4b"/><circle cx="64" cy="76" r="2.6" fill="#ffd54a"/><circle cx="77" cy="80" r="2.6" fill="#4bb3ff"/>
+    <circle cx="56" cy="66" r="2.4" fill="#ffd54a"/><circle cx="72" cy="66" r="2.4" fill="#ff4b4b"/>
+    <circle cx="64" cy="50" r="2.2" fill="#4bb3ff"/>
+  </g>
+  </g>
+  <!-- hill -->
+  <path d="M0 98q40 -26 128 -6v36H0z" fill="url(#hill)"/>
+  <path d="M0 98q40 -26 128 -6" fill="none" stroke="#fff" stroke-opacity=".35" stroke-width="2"/>
+  <!-- road -->
+  <path d="M0 112h128v8q0 8-8 8H8q-8 0-8-8z" fill="#2a2f3a"/>
+  <path d="M8 118h14M34 118h14M60 118h14M86 118h14M112 118h10" stroke="#f5d76e" stroke-width="2" stroke-linecap="round"/>
+  <!-- lidar beam and sensor -->
+  <path d="M14 104L96 112" stroke="#ff3d3d" stroke-width="1.8" stroke-linecap="round" stroke-dasharray="1 3.5" opacity=".95"/>
+  <rect x="8" y="98" width="12" height="12" rx="3" fill="#e8ecf2"/><circle cx="14" cy="104" r="3" fill="#ff3d3d"/>
+  <!-- car -->
+  <g transform="translate(88 100)">
+    <path d="M0 12v-4q0-2 2-3l5-1 4-5q1-1.5 3-1.5h9q2 0 3 1.5l4 5h3q3 0 3 3v5z" fill="#e63946"/>
+    <path d="M12 4l3-3.5h8l3 3.5z" fill="#cfe9ff"/>
+    <circle cx="9" cy="13" r="3.4" fill="#10131a"/><circle cx="27" cy="13" r="3.4" fill="#10131a"/>
+    <circle cx="9" cy="13" r="1.2" fill="#aab"/><circle cx="27" cy="13" r="1.2" fill="#aab"/>
+  </g>
+</svg>
