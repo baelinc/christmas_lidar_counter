@@ -13,7 +13,7 @@ function cc_out($data, $code = 200) {
     exit;
 }
 
-$mutating = array('save_config', 'command', 'service', 'wifi_power', 'wifi_connect', 'wifi_forget');
+$mutating = array('save_config', 'command', 'service', 'wifi_power', 'wifi_connect', 'wifi_forget', 'update_apply');
 if (in_array($action, $mutating, true)) {
     // POST only, and only from our own page (a custom header cannot be set by a cross-site form).
     if (!$isPost || !isset($_SERVER['HTTP_X_REQUESTED_WITH'])) {
@@ -46,7 +46,7 @@ switch ($action) {
         cc_out(array('ok' => true));
 
     case 'command':
-        $allowed = array('adjust', 'reset_today', 'test_mode', 'calibrate', 'sync_now', 'sync_test', 'people_test', 'people_poll');
+        $allowed = array('adjust', 'reset_today', 'test_mode', 'calibrate', 'sync_now', 'sync_test', 'people_test', 'people_poll', 'update_check');
         $cmd = isset($body['cmd']) ? (string)$body['cmd'] : '';
         if (!in_array($cmd, $allowed, true)) cc_out(array('ok' => false, 'error' => 'Unknown command'), 400);
         $payload = array('cmd' => $cmd);
@@ -99,6 +99,28 @@ switch ($action) {
         $ssid = $body['ssid'] ?? '';
         if (!is_string($ssid) || $ssid === '') cc_out(array('ok' => false, 'error' => 'Choose a network first.'), 400);
         cc_out(cc_wifi_call(array('forget'), json_encode(array('ssid' => $ssid))));
+
+    case 'update_status':
+        $info = cc_read_json(CC_RUN_DIR . '/update.json');
+        $res = cc_read_json(CC_RUN_DIR . '/update_result.json');
+        // A result that stopped reporting long ago (power cut mid-update) must not leave the page "busy" forever.
+        if (is_array($res) && !in_array($res['state'] ?? '', array('ok', 'failed', 'uptodate'), true)
+            && time() - (int)($res['ts'] ?? 0) > 900) {
+            $res = array('state' => 'failed', 'message' => 'The last update stopped part-way. Check that the counter is running, then try again.');
+        }
+        cc_out(array('info' => $info, 'result' => $res, 'version' => is_file(dirname(__DIR__) . '/VERSION') ? trim((string)file_get_contents(dirname(__DIR__) . '/VERSION')) : ''));
+
+    case 'update_apply':
+        $cmd = (getenv('CC_UPDATER_NOSUDO') === '1') ? array(getenv('CC_UPDATER') ?: dirname(__DIR__) . '/scripts/updater.py', 'apply')
+             : array('sudo', '-n', dirname(__DIR__) . '/scripts/updater.py', 'apply');
+        $p = @proc_open($cmd, array(0 => array('pipe', 'r'), 1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $pipes);
+        if (!is_resource($p)) cc_out(array('ok' => false, 'error' => 'Could not start the updater.'));
+        fclose($pipes[0]);
+        $out = stream_get_contents($pipes[1]); $err = stream_get_contents($pipes[2]);
+        fclose($pipes[1]); fclose($pipes[2]); proc_close($p);
+        $j = json_decode((string)$out, true);
+        if (is_array($j)) cc_out($j);
+        cc_out(array('ok' => false, 'error' => 'The page is not allowed to install updates yet. Run  sudo ./install.sh  once from the downloaded folder, then try again.'));
 
     case 'log':
         cc_out(array('log' => cc_tail(CC_LOG_FILE, 200), 'errors' => cc_tail(CC_ERR_FILE, 30)));

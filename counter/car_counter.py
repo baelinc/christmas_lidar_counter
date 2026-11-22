@@ -37,7 +37,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 USER_AGENT = "christmas-lidar-counter/" + VERSION
 
 log = logging.getLogger("car-counter")
@@ -119,6 +119,7 @@ SCHEMA = {
     "wp_url": ("str", "", 300),
     "secret": ("str", "", 200),
     "sync_time": ("time", "23:00"),
+    "update_check": ("bool", True),                  # look for a newer version on GitHub once a day
     "sync_days": ("int", 7, 1, 60),
     "sync_only_if_played": ("bool", False),          # skip nights when the Falcon Player (fpp_host) never played a show
     "live_interval_min": ("int", 0, 0, 240),
@@ -660,6 +661,65 @@ class Store:
 
     def meta_set(self, key, value):
         self._db().execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?,?)", (key, str(value)))
+
+
+# --------------------------------------------------------------------------
+# Update checker: is there a newer version on GitHub?  (Installing it is done by scripts/updater.py, as root.)
+# --------------------------------------------------------------------------
+UPDATE_REPO = "baelinc/christmas_lidar_counter"
+UPDATE_BASE = "https://raw.githubusercontent.com/%s/main/" % UPDATE_REPO      # tests point this at a local server
+
+
+def parse_version(text):
+    """'1.2.0' -> (1, 2, 0); anything else -> None."""
+    m = re.match(r"^\s*v?(\d+(?:\.\d+){0,3})\s*$", (text or "").strip().splitlines()[0] if (text or "").strip() else "")
+    return tuple(int(x) for x in m.group(1).split(".")) if m else None
+
+
+def version_newer(latest, current):
+    a, b = parse_version(latest), parse_version(current)
+    if a is None or b is None:
+        return False
+    n = max(len(a), len(b))
+    return a + (0,) * (n - len(a)) > b + (0,) * (n - len(b))
+
+
+def changelog_since(text, current, limit=1800):
+    """The CHANGELOG.md sections that are newer than `current`, as plain text (newest first), trimmed to `limit` characters."""
+    out, keep = [], False
+    for line in (text or "").splitlines():
+        m = re.match(r"^##\s+v?(\d+(?:\.\d+){0,3})\b", line)
+        if m:
+            keep = version_newer(m.group(1), current)
+        if keep:
+            out.append(line)
+    notes = "\n".join(out).strip()
+    return notes if len(notes) <= limit else notes[:limit].rsplit("\n", 1)[0] + "\n..."
+
+
+def fetch_update_text(name, timeout=15, max_bytes=65536):
+    req = urllib.request.Request(UPDATE_BASE + name, headers={"User-Agent": USER_AGENT, "Cache-Control": "no-cache"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read(max_bytes).decode("utf-8", "replace")
+
+
+def check_for_update(current=None):
+    """Ask GitHub for the newest version.  Returns a dict the web page shows; never raises."""
+    current = current or VERSION
+    info = {"checked": int(time.time()), "current": current, "ok": False, "available": False, "latest": "", "notes": "", "error": ""}
+    try:
+        latest = (fetch_update_text("VERSION").strip().splitlines() or [""])[0].strip()
+        if parse_version(latest) is None:
+            raise ValueError("GitHub returned something that is not a version number")
+        info.update(ok=True, latest=latest, available=version_newer(latest, current))
+        if info["available"]:
+            try:
+                info["notes"] = changelog_since(fetch_update_text("CHANGELOG.md", max_bytes=131072), current)
+            except (OSError, ValueError):
+                pass                                   # the notes are a nicety; the update itself does not depend on them
+    except (OSError, ValueError, urllib.error.URLError) as exc:
+        info["error"] = "Could not check GitHub (%s)." % (getattr(exc, "reason", None) or exc)
+    return info
 
 
 # --------------------------------------------------------------------------
@@ -1287,7 +1347,7 @@ class Daemon:
             self.calibration = {"id": cid, "until": time.monotonic() + 6.0, "samples": []}
             self.set_result(cid, True, "Calibrating for 6 seconds - keep the road clear...")
             self.last_result["pending"] = True
-        elif name in ("sync_now", "sync_test", "people_test", "people_poll"):
+        elif name in ("sync_now", "sync_test", "people_test", "people_poll", "update_check"):
             self.sync_q.put(cmd)
         else:
             self.set_result(cid, False, "Unknown command")
@@ -1675,6 +1735,12 @@ class Daemon:
         if cmd.get("cmd") in ("people_test", "people_poll"):
             ok, msg = self.people_poll("test" if cmd.get("cmd") == "people_test" else "manual", test=cmd.get("cmd") == "people_test")
             return self.set_result(cid, ok, msg)
+        if cmd.get("cmd") == "update_check":
+            info = self.do_update_check()
+            if not info["ok"]:
+                return self.set_result(cid, False, info["error"])
+            return self.set_result(cid, True, ("Version %s is available (you have %s)." % (info["latest"], VERSION)) if info["available"]
+                                   else "You have the latest version (%s)." % VERSION)
         if cmd.get("cmd") == "sync_test":
             if not c["wp_url"] or not c["secret"]:
                 return self.set_result(cid, False, "Enter the website address and shared secret first.")
@@ -1687,6 +1753,37 @@ class Daemon:
         else:
             ok, msg = self.do_sync(False, "manual")
             self.set_result(cid, ok, msg)
+
+    def do_update_check(self):
+        info = check_for_update()
+        if info["ok"]:
+            log.info("Update check: installed %s, latest %s%s", VERSION, info["latest"], " (newer)" if info["available"] else "")
+        else:
+            log.info("Update check failed: %s", info["error"])
+        self.store.meta_set("update_info", json.dumps(info))
+        self.write_update_info(info)
+        return info
+
+    def write_update_info(self, info=None):
+        if info is None:
+            try:
+                info = json.loads(self.store.meta_get("update_info", "") or "null")
+            except ValueError:
+                info = None
+        if info:
+            info = dict(info, current=VERSION)                     # always the version that is running now
+            info["available"] = bool(info.get("ok")) and version_newer(info.get("latest", ""), VERSION)
+            atomic_write_json(os.path.join(self.paths["run"], "update.json"), info, 0o644)
+
+    def update_scheduler(self, state):
+        now = time.time()
+        if "next" not in state:
+            self.write_update_info()                                # show what we knew before the restart
+            state["next"] = now + 180                               # first look a few minutes after start-up
+        if not self.cfg["update_check"] or now < state["next"]:
+            return
+        info = self.do_update_check()
+        state["next"] = now + (86400 if info["ok"] else 3600)
 
     def sync_scheduler(self, state):
         c = self.cfg
@@ -1723,6 +1820,7 @@ class Daemon:
         next_stats = 0.0
         sync_state = {}
         people_state = {}
+        update_state = {}
         while not self.stop_evt.is_set():
             now = time.time()
             try:
@@ -1744,6 +1842,7 @@ class Daemon:
                     next_stats = now + 60
                 self.sync_scheduler(sync_state)
                 self.people_scheduler(people_state)
+                self.update_scheduler(update_state)
             except Exception:
                 log.exception("Housekeeping error")
             self.stop_evt.wait(1.0)

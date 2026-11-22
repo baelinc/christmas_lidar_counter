@@ -60,7 +60,7 @@ The lidar needs 5 V power; its data signals are 3.3 V. A USB adapter needs no se
 1. **Sensor** – *Sensor & Schedule* tab: choose how it is connected. The Dashboard pill turns green: *Sensor: OK*.
 2. **Show hours** – same tab. One entry per set of days with the same hours.
 3. **Follow your show (optional)** – *Count cars* → *Only while FPP is playing*, then your master Falcon Player's address.
-4. **Count one lane (optional)** – see below.
+4. **Choose which lane to count (optional)** – say which way the near lane goes and whether to count one lane or both; see below.
 5. **Website** – *Website Sync* tab: paste your site address and secret from the WordPress plugin, press *Test connection*.
 6. **Crowd board (optional)** – *Crowd (phones)* tab. If the board is on your Ethernet network and the counter can't find it, set *Network connection to use* to *Ethernet*.
 7. **Wi‑Fi (optional)** – *Wi‑Fi* tab, see below.
@@ -94,6 +94,16 @@ looking straight across. In *Sensor & Schedule* use **Which lane do you want to 
 Later you can switch between counting coming‑in and leaving cars without recording the lanes again. Drive a car through each way to check it counts
 once. Cars that U‑turn or drive down the middle can still be missed or miscounted. (Older versions ignored a lane by raising *Nearest distance*;
 saving here replaces that.)
+
+## Updating
+
+The *Updates* tab checks GitHub once a day (or press *Check now*) and shows what changed. *Install update* downloads the newest version from this project's GitHub page, checks it, keeps a copy of the working version in `/opt/car-counter.prev`, installs, and waits for the counter and the page to answer. If the new version does not start, the old one is put back automatically. Your settings and counts are never touched.
+
+- Switch the daily check off with the checkbox on that tab.
+- Updates run as a separate system job, so they finish even though the page restarts.
+- If the page cannot reach GitHub, nothing is changed; you can always update by hand: `cd ~/christmas_lidar_counter && git pull && sudo ./install.sh`.
+- A small watchdog (`car-counter-watchdog.timer`) restarts the settings page if it stops answering for a minute. See what it did with `journalctl -t car-counter-watchdog`.
+- The first time, run `sudo ./install.sh` once so the page is allowed to install updates.
 
 ## Good to know
 * **The Pi's clock matters** – show hours use the Pi's own time zone. Set it with `sudo timedatectl set-timezone America/Chicago`.

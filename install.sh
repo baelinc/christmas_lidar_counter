@@ -1,10 +1,11 @@
 #!/bin/bash
 # Christmas Lidar Counter - install on a Raspberry Pi.
-#   sudo ./install.sh [--port 80] [--password 'secret'] [--reboot] [--no-uart] [--no-start]
+#   sudo ./install.sh [--port 80] [--password 'secret'] [--reboot] [--no-uart] [--no-start] [--update]
+# --update is what the page's Update button uses: keeps the port and password, asks nothing, never restarts the Pi.
 # Safe to run again: it updates the program and keeps your settings and counts.
 set -euo pipefail
 
-PORT=""; PASSWORD=""; UART=1; REBOOT=0; START=1
+PORT=""; PASSWORD=""; UART=1; REBOOT=0; START=1; UPDATE=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --port) PORT="${2:?--port needs a number}"; shift 2 ;;
@@ -12,10 +13,14 @@ while [ $# -gt 0 ]; do
         --no-uart) UART=0; shift ;;
         --reboot) REBOOT=1; shift ;;
         --no-start) START=0; shift ;;
+        --update) UPDATE=1; UART=0; shift ;;
         -h|--help) sed -n '2,4p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done
+if [ -z "$PORT" ] && [ "$UPDATE" = 1 ]; then
+    PORT="$(sed -n 's/^CC_WEB_PORT=//p' /etc/car-counter/car-counter.env 2>/dev/null | head -n1)"; PORT="${PORT:-80}"
+fi
 if [ -z "$PORT" ]; then
     PORT=80
     # Port 80 is the normal web port. If something else already uses it (and it is not our own page), use 8080 instead.
@@ -54,11 +59,12 @@ echo "== Program files -> $APP"
 mkdir -p "$APP"
 rm -rf "$APP/counter" "$APP/web" "$APP/systemd" "$APP/scripts"
 cp -a "$SRC/counter" "$SRC/web" "$SRC/systemd" "$SRC/scripts" "$APP/"
-cp -a "$SRC/set-password.sh" "$APP/"
+cp -a "$SRC/set-password.sh" "$SRC/VERSION" "$APP/"
+[ -f "$SRC/CHANGELOG.md" ] && cp -a "$SRC/CHANGELOG.md" "$APP/"
 find "$APP" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
 chmod +x "$APP"/*.sh "$APP"/scripts/*.sh "$APP"/counter/*.py 2>/dev/null || true
 chown -R root:root "$APP"
-chmod 755 "$APP/scripts/wifi_helper.py"
+chmod 755 "$APP/scripts/wifi_helper.py" "$APP/scripts/updater.py" "$APP/scripts/web_watchdog.py"
 
 echo "== Service account and folders"
 id "$USER_NAME" >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sbin/nologin "$USER_NAME"
@@ -96,10 +102,11 @@ else
     echo "   Keeping the existing password (change it with: sudo car-counter-passwd)"
 fi
 
-echo "== Permission for the web page to restart the counter and change Wi-Fi"
+echo "== Permission for the web page to restart the counter, change Wi-Fi and install updates"
 cat > /etc/sudoers.d/car-counter <<SUDO
 $USER_NAME ALL=(root) NOPASSWD: $SYSTEMCTL start car-counter, $SYSTEMCTL stop car-counter, $SYSTEMCTL restart car-counter, $SYSTEMCTL reboot
 $USER_NAME ALL=(root) NOPASSWD: $APP/scripts/wifi_helper.py *
+$USER_NAME ALL=(root) NOPASSWD: $APP/scripts/updater.py apply
 SUDO
 chmod 440 /etc/sudoers.d/car-counter
 if command -v visudo >/dev/null 2>&1 && ! visudo -cf /etc/sudoers.d/car-counter >/dev/null; then
@@ -110,8 +117,11 @@ echo "== systemd services"
 for u in car-counter car-counter-web; do
     sed "s|@APP@|$APP|g" "$APP/systemd/$u.service" > "/etc/systemd/system/$u.service"
 done
+sed "s|@APP@|$APP|g" "$APP/systemd/car-counter-watchdog.service" > /etc/systemd/system/car-counter-watchdog.service
+cp "$APP/systemd/car-counter-watchdog.timer" /etc/systemd/system/car-counter-watchdog.timer
 "$SYSTEMCTL" daemon-reload
 "$SYSTEMCTL" enable car-counter car-counter-web >/dev/null 2>&1
+"$SYSTEMCTL" enable car-counter-watchdog.timer >/dev/null 2>&1
 
 NEED_REBOOT=0
 if [ "$UART" = 1 ]; then
@@ -126,6 +136,7 @@ fi
 
 if [ "$START" = 1 ]; then
     "$SYSTEMCTL" restart car-counter car-counter-web
+    "$SYSTEMCTL" start car-counter-watchdog.timer >/dev/null 2>&1 || true
     sleep 2
     for u in car-counter car-counter-web; do
         printf '   %-18s %s\n' "$u" "$("$SYSTEMCTL" is-active "$u" || true)"

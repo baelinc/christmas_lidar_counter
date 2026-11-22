@@ -86,6 +86,7 @@ require_once __DIR__ . '/lib.php';
     <button data-tab="people">Crowd (phones)</button>
     <button data-tab="website">Website Sync</button>
     <button data-tab="wifi">Wi-Fi</button>
+    <button data-tab="update" id="tabUpdate">Updates</button>
     <button data-tab="log">Log</button>
   </div>
 
@@ -267,6 +268,23 @@ require_once __DIR__ . '/lib.php';
   </div>
 
   <!-- ===================== Log ===================== -->
+  <!-- ===================== Updates ===================== -->
+  <div id="tab-update" style="display:none">
+    <div class="panel">
+      <h3>Software updates</h3>
+      <div id="updState" class="msg">Checking…</div>
+      <pre id="updNotes" class="help" style="display:none;white-space:pre-wrap"></pre>
+      <div class="row">
+        <button class="b primary" id="updInstall" style="display:none">Install update</button>
+        <button class="b" id="updCheck">Check now</button>
+      </div>
+      <div class="progress" id="updProg" style="display:none"><div id="updBar" style="height:8px;width:0;background:#2e7d32;border-radius:4px;transition:width .4s"></div></div>
+      <div class="msg" id="updMsg" style="white-space:pre-line"></div>
+      <div class="help">Updating keeps your settings, counts and password. The page and counter restart for about a minute, and counting pauses briefly. If the new version does not start, the old one is put back automatically.</div>
+      <label class="check"><input type="checkbox" id="updAuto"> Check GitHub for new versions once a day</label>
+    </div>
+  </div>
+
   <div id="tab-log" style="display:none">
     <div class="row">
       <button class="b" id="btnLog">Refresh</button>
@@ -302,7 +320,7 @@ require_once __DIR__ . '/lib.php';
   function pill(id, text, cls) { var e = $(id); e.textContent = text; e.className = 'pill ' + (cls || ''); }
 
   /* ---------- tabs ---------- */
-  var tabs = ['dash', 'settings', 'people', 'website', 'wifi', 'log'];
+  var tabs = ['dash', 'settings', 'people', 'website', 'wifi', 'update', 'log'];
   $('tabs').addEventListener('click', function (e) {
     var t = e.target.getAttribute && e.target.getAttribute('data-tab');
     if (!t) return;
@@ -312,6 +330,7 @@ require_once __DIR__ . '/lib.php';
     Array.prototype.forEach.call($('tabs').children, function (b) { b.classList.toggle('active', b === e.target); });
     if (t === 'log') loadLog();
     if (t === 'wifi') wifiOpen();
+    if (t === 'update') updOpen();
     if (t === 'people' || t === 'settings') loadIfaces();
   });
 
@@ -1027,6 +1046,63 @@ require_once __DIR__ . '/lib.php';
     }).catch(function () { setMsg($('wifiListMsg'), 'Could not reach the Pi.', false); })
       .then(function () { b.disabled = false; b.textContent = 'Scan again'; });
   }
+
+  /* ---------- updates ---------- */
+  var updTimer = null, updBusy = false;
+  function updBanner(info) {
+    var b = $('tabUpdate');
+    b.textContent = (info && info.available) ? 'Updates •' : 'Updates';
+  }
+  function updRender(d) {
+    var info = d.info || {}, res = d.result || {};
+    updBanner(info);
+    var cur = d.version || info.current || '';
+    var busy = ['starting', 'checking', 'downloading', 'verifying', 'installing', 'restarting'].indexOf(res.state) >= 0;
+    updBusy = busy;
+    $('updProg').style.display = busy ? '' : 'none';
+    if (busy) $('updBar').style.width = Math.round(100 * (res.step || 0) / (res.steps || 6)) + '%';
+    var st = $('updState');
+    if (info.ok === false && info.error) { st.textContent = 'Version ' + cur + '. ' + info.error; st.className = 'msg bad'; }
+    else if (info.available) { st.textContent = 'Version ' + info.latest + ' is available. You have ' + cur + '.'; st.className = 'msg ok'; }
+    else { st.textContent = 'You have the latest version (' + cur + ').' + (info.checked ? ' Last checked ' + fmtTime(info.checked) + '.' : ''); st.className = 'msg ok'; }
+    var notes = $('updNotes');
+    notes.style.display = (info.available && info.notes) ? '' : 'none';
+    notes.textContent = info.notes || '';
+    $('updInstall').style.display = (info.available && !busy) ? '' : 'none';
+    $('updInstall').disabled = busy; $('updCheck').disabled = busy;
+    var m = $('updMsg');
+    if (res.message) setMsg(m, res.message, res.state !== 'failed');
+    return busy;
+  }
+  function updPoll() {
+    clearTimeout(updTimer);
+    api('update_status').then(function (d) {
+      if (updRender(d)) updTimer = setTimeout(updPoll, 2000);
+      else if (d.result && d.result.state === 'ok') setTimeout(function () { location.reload(); }, 1500);
+    }).catch(function () { updTimer = setTimeout(updPoll, 3000); });      // the page itself restarts during an update
+  }
+  function updOpen() {
+    api('config').then(function (c) { $('updAuto').checked = !!c.update_check; });
+    updPoll();
+  }
+  $('updCheck').onclick = function () {
+    sendCommand({ cmd: 'update_check' }, $('updMsg')).then(function () { updPoll(); });
+  };
+  $('updInstall').onclick = function () {
+    if (!confirm('Install the update now? Counting pauses for about a minute.')) return;
+    setMsg($('updMsg'), 'Starting…', true);
+    api('update_apply', {}).then(function (r) {
+      if (!r.ok) { setMsg($('updMsg'), r.error || 'Could not start the update.', false); return; }
+      updPoll();
+    }).catch(function () { setMsg($('updMsg'), 'Could not reach the page.', false); });
+  };
+  $('updAuto').onchange = function () {
+    api('save_config', { update_check: $('updAuto').checked });
+  };
+  function updQuiet() {                                    // lets the Updates tab show a dot when something new is out
+    api('update_status').then(function (d) { updBanner(d.info || {}); }).catch(function () {});
+  }
+
   function wifiOpen() {
     wifiLoadStatus().then(function (st) {
       if (st && st.available && st.has_device && st.radio_on) wifiScan(!wifi.loaded);
@@ -1128,7 +1204,7 @@ require_once __DIR__ . '/lib.php';
     populateUsb();
   });
   (function () { var h = (location.hash || '').replace('#', ''); if (h) gotoTab(h); })();
-  refreshStats(); refresh();
+  refreshStats(); refresh(); updQuiet();
   var currentTab = function () { return $('tab-dash').style.display === 'none' ? 'other' : 'dash'; };
   (function loop() {
     // one request at a time, never faster than the Pi can answer; relaxed on other tabs and paused when the page is in the background

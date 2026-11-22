@@ -2,11 +2,12 @@
 # Remove the Christmas Lidar Counter.  Keeps your counts and settings unless you add --purge.
 set -u
 if [ "$(id -u)" != "0" ]; then echo "Run with sudo." >&2; exit 1; fi
-systemctl disable --now car-counter car-counter-web 2>/dev/null
+systemctl disable --now car-counter car-counter-web car-counter-watchdog.timer 2>/dev/null
 rm -f /etc/systemd/system/car-counter.service /etc/systemd/system/car-counter-web.service \
+      /etc/systemd/system/car-counter-watchdog.service /etc/systemd/system/car-counter-watchdog.timer \
       /etc/sudoers.d/car-counter /etc/tmpfiles.d/car-counter.conf /usr/local/bin/car-counter-passwd
 systemctl daemon-reload
-rm -rf /opt/car-counter
+rm -rf /opt/car-counter /opt/car-counter.prev /var/lib/car-counter-update
 if [ "${1:-}" = "--purge" ]; then
     rm -rf /var/lib/car-counter /var/log/car-counter /etc/car-counter
     id carcounter >/dev/null 2>&1 && userdel carcounter 2>/dev/null
