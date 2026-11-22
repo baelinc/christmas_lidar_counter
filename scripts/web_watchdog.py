@@ -18,7 +18,10 @@ WEB = "car-counter-web"
 
 
 def log(msg):
-    subprocess.run(["logger", "-t", "car-counter-watchdog", msg], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        subprocess.run(["logger", "-t", "car-counter-watchdog", msg], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
     print(msg)
 
 

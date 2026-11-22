@@ -23,7 +23,10 @@ GAP = {"daily": 1, "every_other_day": 2, "weekly": 7}
 
 
 def log(msg):
-    subprocess.run(["logger", "-t", "car-counter-reboot", msg], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        subprocess.run(["logger", "-t", "car-counter-reboot", msg], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass                                               # no "logger" tool: the message still prints
     print(msg)
 
 
@@ -32,27 +35,31 @@ def uptime_seconds():
         return float(fh.read().split()[0])
 
 
-def should_reboot(cfg, now, uptime):
-    """True if a scheduled restart is due.  `now` is local time (naive), `uptime` in seconds."""
+def decide(cfg, now, uptime):
+    """(True/False, plain-words reason).  `now` is local time (naive), `uptime` in seconds."""
     mode = cfg.get("reboot_schedule", "off")
     if mode not in GAP:
-        return False
+        return False, "no restart schedule is switched on"
     m = re.match(r"^(\d{1,2}):(\d{2})$", str(cfg.get("reboot_time", "03:00")))
     if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
-        return False
+        return False, "the restart time is not valid"
     due = now.replace(hour=int(m.group(1)), minute=int(m.group(2)), second=0, microsecond=0)
     if not (due <= now < due + datetime.timedelta(minutes=WINDOW_MIN)):
-        return False
+        return False, "it is not within %d minutes after %s (now %s)" % (WINDOW_MIN, due.strftime("%H:%M"), now.strftime("%H:%M"))
     if uptime < MIN_UPTIME:
-        return False
+        return False, "the Pi started less than 15 minutes ago"
     if mode == "weekly" and DAYS[now.weekday()] != cfg.get("reboot_weekday", "sun"):
-        return False
+        return False, "today is not the chosen day (%s)" % cfg.get("reboot_weekday", "sun")
     booted = now - datetime.timedelta(seconds=uptime)
     if booted >= due:
-        return False                                       # already restarted since the chosen time
+        return False, "the Pi already started after the chosen time (at %s)" % booted.strftime("%H:%M")
     if mode == "every_other_day" and (now.date() - booted.date()).days < GAP[mode]:
-        return False
-    return True
+        return False, "the Pi started on %s, less than 2 days ago" % booted.date()
+    return True, "a restart is due"
+
+
+def should_reboot(cfg, now, uptime):
+    return decide(cfg, now, uptime)[0]
 
 
 def update_running():
@@ -60,14 +67,23 @@ def update_running():
 
 
 def main():
+    explain = "--explain" in sys.argv
     try:
         with open(os.path.join(DATA, "config.json")) as fh:
             cfg = json.load(fh)
     except (OSError, ValueError):
+        if explain:
+            print("Could not read %s/config.json" % DATA)
         return 0
-    if not isinstance(cfg, dict) or cfg.get("reboot_schedule", "off") == "off":
+    if not isinstance(cfg, dict):
         return 0
-    if not should_reboot(cfg, datetime.datetime.now(), uptime_seconds()) or update_running():
+    ok, why = decide(cfg, datetime.datetime.now(), uptime_seconds())
+    if explain:
+        print("Schedule: %s at %s%s" % (cfg.get("reboot_schedule", "off"), cfg.get("reboot_time", "03:00"),
+                                        " on " + str(cfg.get("reboot_weekday", "sun")) if cfg.get("reboot_schedule") == "weekly" else ""))
+        print(("Would restart now: " if ok else "Would not restart: ") + why)
+        return 0
+    if not ok or update_running():
         return 0
     log("Scheduled restart (%s at %s) - restarting the Pi now." % (cfg.get("reboot_schedule"), cfg.get("reboot_time")))
     subprocess.run(["systemctl", "reboot"])
