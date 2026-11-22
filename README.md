@@ -104,6 +104,7 @@ The *Updates* tab checks GitHub once a day (or press *Check now*) and shows what
 - Switch the daily check off with the checkbox on that tab.
 - Updates run as a separate system job, so they finish even though the page restarts.
 - If the page cannot reach GitHub, nothing is changed; you can always update by hand: `cd ~/christmas_lidar_counter && git pull && sudo ./install.sh`.
+- **Automatic restart:** the same tab can restart the Pi every night, every other day, or once a week at a time you choose (default 3:00 AM). It never restarts within 15 minutes of starting up, never during an update, and saving the setting never causes an instant restart. See what it did with `journalctl -t car-counter-reboot`. Use the Pi's own time zone (`timedatectl`).
 - A small watchdog (`car-counter-watchdog.timer`) restarts the settings page if it stops answering for a minute. See what it did with `journalctl -t car-counter-watchdog`.
 - The first time, run `sudo ./install.sh` once so the page is allowed to install updates.
 

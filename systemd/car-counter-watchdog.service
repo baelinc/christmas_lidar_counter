@@ -4,3 +4,4 @@ Description=Restart the Christmas Lidar Counter page if it stops answering
 [Service]
 Type=oneshot
 ExecStart=@APP@/scripts/web_watchdog.py
+ExecStart=-@APP@/scripts/scheduled_reboot.py

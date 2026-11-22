@@ -119,6 +119,9 @@ SCHEMA = {
     "wp_url": ("str", "", 300),
     "secret": ("str", "", 200),
     "sync_time": ("time", "23:00"),
+    "reboot_schedule": ("choice", "off", ["off", "daily", "every_other_day", "weekly"]),   # restart the Pi on a schedule (done by scripts/scheduled_reboot.py)
+    "reboot_time": ("time", "03:00"),
+    "reboot_weekday": ("choice", "sun", ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]),
     "update_check": ("bool", True),                  # look for a newer version on GitHub once a day
     "sync_days": ("int", 7, 1, 60),
     "sync_only_if_played": ("bool", False),          # skip nights when the Falcon Player (fpp_host) never played a show

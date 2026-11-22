@@ -86,7 +86,7 @@ require_once __DIR__ . '/lib.php';
     <button data-tab="people">Crowd (phones)</button>
     <button data-tab="website">Website Sync</button>
     <button data-tab="wifi">Wi-Fi</button>
-    <button data-tab="update" id="tabUpdate">Updates</button>
+    <button data-tab="update" id="tabUpdate">Updates &amp; Restart</button>
     <button data-tab="log">Log</button>
   </div>
 
@@ -283,6 +283,13 @@ require_once __DIR__ . '/lib.php';
       <div class="help">Updating keeps your settings, counts and password. The page and counter restart for about a minute, and counting pauses briefly. If the new version does not start, the old one is put back automatically.</div>
       <label class="check"><input type="checkbox" id="updAuto"> Check GitHub for new versions once a day</label>
     </div>
+    <div class="panel">
+      <h3>Automatic restart</h3>
+      <div class="help">Restarting the Pi now and then keeps a long-running show healthy. Pick a quiet time well outside your show hours. Counts are saved before the restart, and the counter starts again by itself.</div>
+      <div id="fReboot"></div>
+      <div class="row"><button class="b primary" id="btnSaveReboot">Save</button><span class="msg" id="saveMsgReboot"></span></div>
+      <div class="help" id="rebootNext"></div>
+    </div>
   </div>
 
   <div id="tab-log" style="display:none">
@@ -369,6 +376,11 @@ require_once __DIR__ . '/lib.php';
       { k: 'people_time_col', l: 'Time column (advanced)', t: 'number', h: '0 = detect automatically. Otherwise the column number (1 = first) holding the timestamp.' },
       { k: 'people_count_col', l: 'Count column (advanced)', t: 'number', h: '0 = detect automatically. Otherwise the column number holding the crowd/device count. Use “Test board” to see what was detected.' }
     ],
+    fReboot: [
+      { k: 'reboot_schedule', l: 'Restart the Pi', t: 'select', o: [['off', 'Never (only when I choose)'], ['daily', 'Every night'], ['every_other_day', 'Every other day'], ['weekly', 'Once a week']] },
+      { k: 'reboot_weekday', l: 'On', t: 'select', o: [['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'], ['fri', 'Friday'], ['sat', 'Saturday'], ['sun', 'Sunday']] },
+      { k: 'reboot_time', l: 'At', t: 'time', h: 'Default 3:00 AM. If the Pi is off at that time it simply does not restart that day.' }
+    ],
     fWebsite: [
       { k: 'sync_enabled', l: 'Upload to website', t: 'checkbox' },
       { k: 'wp_url', l: 'Website address', t: 'text', ph: 'https://www.example.com', h: 'Just the site address – no /wp-json path.' },
@@ -448,6 +460,17 @@ require_once __DIR__ . '/lib.php';
     $('wireGpio').style.display = (m === 'gpio') ? '' : 'none';
     renderUart();
   }
+  function applyRebootVisibility() {
+    var m = $('cf_reboot_schedule') ? $('cf_reboot_schedule').value : 'off';
+    if ($('row_reboot_weekday')) $('row_reboot_weekday').style.display = (m === 'weekly') ? '' : 'none';
+    if ($('row_reboot_time')) $('row_reboot_time').style.display = (m === 'off') ? 'none' : '';
+    var n = $('rebootNext');
+    if (n) {
+      var t = $('cf_reboot_time') ? $('cf_reboot_time').value : '03:00';
+      var wd = $('cf_reboot_weekday') ? $('cf_reboot_weekday').selectedOptions[0].textContent : '';
+      n.textContent = m === 'off' ? '' : 'The Pi will restart ' + (m === 'daily' ? 'every night' : m === 'every_other_day' ? 'every other day' : 'every ' + wd) + ' at ' + t + '.';
+    }
+  }
   function applyModeVisibility() {
     var f = $('schedField'); if (f) f.style.display = ($('cf_schedule_mode').value !== 'always') ? '' : 'none';
     var needFpp = ($('cf_schedule_mode').value === 'playing') || !!($('cf_sync_only_if_played') && $('cf_sync_only_if_played').checked);
@@ -495,9 +518,10 @@ require_once __DIR__ . '/lib.php';
       row.appendChild(lab); row.appendChild(cell); box.appendChild(row);
     });
   }
-  ['fSensor', 'fDetect', 'fSched', 'fPeople', 'fWebsite'].forEach(buildForm);
+  ['fSensor', 'fDetect', 'fSched', 'fPeople', 'fWebsite', 'fReboot'].forEach(buildForm);
   $('cf_schedule_mode').addEventListener('change', applyModeVisibility);
   $('cf_sync_only_if_played').addEventListener('change', applyModeVisibility);
+  ['cf_reboot_schedule', 'cf_reboot_weekday', 'cf_reboot_time'].forEach(function (i) { $(i).addEventListener('change', applyRebootVisibility); });
   $('cf_fpp_host').addEventListener('input', applyModeVisibility);
   (function () {
     var n = document.createElement('div'); n.id = 'fppNeeded'; n.className = 'msg warn'; n.style.display = 'none';
@@ -524,7 +548,7 @@ require_once __DIR__ . '/lib.php';
     populateIfaces();
     if (typeof laneInit === 'function') laneInit();
     applyConnection();
-    applyModeVisibility();
+    applyModeVisibility(); applyRebootVisibility();
   }
   function collect(boxes) {
     var out = {};
@@ -561,6 +585,7 @@ require_once __DIR__ . '/lib.php';
     });
   }
   $('btnSaveSettings').onclick = function () { save(['fSensor', 'fDetect', 'fSched'], $('saveMsg1')); };
+  $('btnSaveReboot').onclick = function () { save(['fReboot'], $('saveMsgReboot')); };
   $('btnSaveWeb').onclick = function () { save(['fWebsite'], $('saveMsg2')); };
   $('btnSavePeople').onclick = function () { save(['fPeople'], $('saveMsgPeople')); };
   $('btnTestPeople').onclick = function () {
@@ -1051,7 +1076,7 @@ require_once __DIR__ . '/lib.php';
   var updTimer = null, updBusy = false;
   function updBanner(info) {
     var b = $('tabUpdate');
-    b.textContent = (info && info.available) ? 'Updates •' : 'Updates';
+    b.textContent = (info && info.available) ? 'Updates & Restart •' : 'Updates & Restart';
   }
   function updRender(d) {
     var info = d.info || {}, res = d.result || {};

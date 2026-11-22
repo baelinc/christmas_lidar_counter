@@ -218,3 +218,47 @@ class VerifyAndRunTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScheduledRebootTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        sp = importlib.util.spec_from_file_location("sched_reboot", os.path.join(ROOT, "scripts", "scheduled_reboot.py"))
+        cls.m = importlib.util.module_from_spec(sp)
+        sp.loader.exec_module(cls.m)
+
+    def due(self, cfg, now, boot_days_ago=3.0, boot_at=None):
+        import datetime
+        n = datetime.datetime.strptime(now, "%Y-%m-%d %H:%M")
+        up = boot_days_ago * 86400 if boot_at is None else (n - datetime.datetime.strptime(boot_at, "%Y-%m-%d %H:%M")).total_seconds()
+        return self.m.should_reboot(cfg, n, up)
+
+    def test_off_and_bad(self):
+        self.assertFalse(self.due({"reboot_schedule": "off"}, "2026-11-23 03:01"))
+        self.assertFalse(self.due({"reboot_schedule": "daily", "reboot_time": "junk"}, "2026-11-23 03:01"))
+        self.assertFalse(self.due({}, "2026-11-23 03:01"))
+
+    def test_daily_window(self):
+        c = {"reboot_schedule": "daily", "reboot_time": "03:00"}
+        self.assertTrue(self.due(c, "2026-11-23 03:00"))
+        self.assertTrue(self.due(c, "2026-11-23 03:09"))
+        self.assertFalse(self.due(c, "2026-11-23 02:59"))
+        self.assertFalse(self.due(c, "2026-11-23 03:10"))      # past the window: saving a new time never restarts at once
+        self.assertFalse(self.due(c, "2026-11-23 14:00"))
+
+    def test_no_double_or_loop(self):
+        c = {"reboot_schedule": "daily", "reboot_time": "03:00"}
+        self.assertFalse(self.due(c, "2026-11-23 03:05", boot_at="2026-11-23 03:01"))   # already restarted
+        self.assertFalse(self.due(c, "2026-11-23 03:05", boot_at="2026-11-23 02:55"))   # only 10 min up
+        self.assertTrue(self.due(c, "2026-11-23 03:05", boot_at="2026-11-22 18:00"))
+
+    def test_every_other_day(self):
+        c = {"reboot_schedule": "every_other_day", "reboot_time": "03:00"}
+        self.assertFalse(self.due(c, "2026-11-23 03:01", boot_at="2026-11-22 03:00"))   # restarted yesterday
+        self.assertTrue(self.due(c, "2026-11-23 03:01", boot_at="2026-11-21 03:00"))
+        self.assertFalse(self.due(c, "2026-11-23 03:01", boot_at="2026-11-22 20:00"))   # manual restart last evening
+
+    def test_weekly(self):
+        c = {"reboot_schedule": "weekly", "reboot_time": "03:00", "reboot_weekday": "sun"}
+        self.assertTrue(self.due(c, "2026-11-22 03:01"))        # a Sunday
+        self.assertFalse(self.due(c, "2026-11-23 03:01"))       # Monday

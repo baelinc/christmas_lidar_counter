@@ -64,7 +64,7 @@ cp -a "$SRC/set-password.sh" "$SRC/VERSION" "$APP/"
 find "$APP" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
 chmod +x "$APP"/*.sh "$APP"/scripts/*.sh "$APP"/counter/*.py 2>/dev/null || true
 chown -R root:root "$APP"
-chmod 755 "$APP/scripts/wifi_helper.py" "$APP/scripts/updater.py" "$APP/scripts/web_watchdog.py"
+chmod 755 "$APP/scripts/wifi_helper.py" "$APP/scripts/updater.py" "$APP/scripts/web_watchdog.py" "$APP/scripts/scheduled_reboot.py"
 
 echo "== Service account and folders"
 id "$USER_NAME" >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sbin/nologin "$USER_NAME"
