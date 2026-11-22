@@ -124,14 +124,19 @@ cp "$APP/systemd/car-counter-watchdog.timer" /etc/systemd/system/car-counter-wat
 "$SYSTEMCTL" enable car-counter-watchdog.timer >/dev/null 2>&1
 
 NEED_REBOOT=0
+BOOTDIR=/boot/firmware; [ -f "$BOOTDIR/config.txt" ] || BOOTDIR=/boot
+# The serial-port step only exists on a Raspberry Pi.  Boards without its config file (Orange Pi and others) use the USB adapter.
+if [ "$UART" = 1 ] && [ ! -f "$BOOTDIR/config.txt" ]; then
+    echo "== Skipping the GPIO serial-port step (not a Raspberry Pi - use the USB-to-serial adapter)"
+    UART=0
+fi
 if [ "$UART" = 1 ]; then
     echo "== Switching on the Pi's serial port (so the lidar can use the GPIO pins)"
-    BOOTDIR=/boot/firmware; [ -f "$BOOTDIR/config.txt" ] || BOOTDIR=/boot
-    BEFORE="$(cat "$BOOTDIR/config.txt" "$BOOTDIR/cmdline.txt" 2>/dev/null | md5sum)"
+    BEFORE="$(cat "$BOOTDIR/config.txt" "$BOOTDIR/cmdline.txt" 2>/dev/null | md5sum || true)"
     "$APP/scripts/enable_uart.sh" || echo "Could not change the serial settings - use raspi-config > Interface Options > Serial Port" >&2
-    AFTER="$(cat "$BOOTDIR/config.txt" "$BOOTDIR/cmdline.txt" 2>/dev/null | md5sum)"
+    AFTER="$(cat "$BOOTDIR/config.txt" "$BOOTDIR/cmdline.txt" 2>/dev/null | md5sum || true)"
     [ "$BEFORE" != "$AFTER" ] && NEED_REBOOT=1
-    grep -Eq 'console=(serial0|ttyAMA0|ttyS0),' /proc/cmdline 2>/dev/null && [ -f "$BOOTDIR/config.txt" ] && NEED_REBOOT=1
+    if grep -Eq 'console=(serial0|ttyAMA0|ttyS0),' /proc/cmdline 2>/dev/null && [ -f "$BOOTDIR/config.txt" ]; then NEED_REBOOT=1; fi
 fi
 
 if [ "$START" = 1 ]; then
