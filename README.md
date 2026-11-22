@@ -12,7 +12,7 @@ example the entrance of your street, without needing it to be next to your show 
 ## Features
 * **Easy web page** – works on a phone; setup checklist, big live count, charts, CSV export, password protected
 * **Lidar on USB or GPIO** – pick *USB‑to‑serial adapter* or *Pi GPIO header* in the settings; the page shows the matching wiring table
-* **Count only one lane** helper – record the near and far lane and cars leaving (near lane) are ignored, so each car is counted once on a two‑way road
+* **Choose which lane to count** – say whether the lane closest to the sensor is coming in or leaving, then count either lane or both, so each car is counted once on a two‑way road
 * **Follow your show** – enter your master Falcon Player's address and cars are only counted while a show is playing; if the Pi can't reach it, your show hours are used
 * Show schedule with any number of entries (days + hours, past‑midnight aware); detections outside it are kept as *off‑hours*
 * Test mode, one‑click **Calibrate empty road**, manual +1 / −1 / reset, warnings for a silent sensor or blocked beam
@@ -83,11 +83,17 @@ joins one when you pick it and type the password. Hidden networks can be typed i
 * After updating from an older version, run `sudo ./install.sh` again so the new permission is added.
 
 ## Counting each car once on a two‑way road
-At the entrance of a dead‑end street every car passes twice – arriving and leaving. Mount the sensor on one side of the road,
-looking straight across. Arriving cars use the far lane; leaving cars use the near lane. In *Sensor & Schedule* use
-**Count only one lane**: put a car (or yourself) in the near lane and press *Record near lane*, then the far lane and press
-*Record far lane*, then *Use these settings*. Drive a car through each way to check. Cars that U‑turn or drive down the
-middle can still be missed or miscounted.
+At the entrance of a dead‑end street every car passes twice – coming in and leaving. Mount the sensor on one side of the road,
+looking straight across. In *Sensor & Schedule* use **Which lane do you want to count?**:
+
+1. Say what the lane **closest to the sensor** carries: cars *coming in* or cars *leaving*. The picture updates, and the far lane gets the other direction.
+2. Choose what to count: **cars coming in**, **cars leaving**, or **both lanes**.
+3. If you chose one lane, show the sensor where the lanes are: put a car (or yourself) in the near lane and press *Record near lane*,
+   then the far lane and press *Record far lane*. Press *Save lane settings*.
+
+Later you can switch between counting coming‑in and leaving cars without recording the lanes again. Drive a car through each way to check it counts
+once. Cars that U‑turn or drive down the middle can still be missed or miscounted. (Older versions ignored a lane by raising *Nearest distance*;
+saving here replaces that.)
 
 ## Good to know
 * **The Pi's clock matters** – show hours use the Pi's own time zone. Set it with `sudo timedatectl set-timezone America/Chicago`.

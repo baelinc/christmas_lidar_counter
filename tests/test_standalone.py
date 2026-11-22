@@ -398,3 +398,80 @@ class WebTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LaneTests(unittest.TestCase):
+    """Choosing which lane to count: near/far depends on which direction the lane closest to the sensor carries."""
+
+    def cfg(self, **kw):
+        base = cc.normalize_config({})
+        base.update(min_cm=30, max_cm=600, lane_split_cm=250)
+        base.update(kw)
+        return base
+
+    def test_zone_for_every_combination(self):
+        z = lambda **kw: cc.effective_zone(self.cfg(**kw))
+        # near lane = leaving (the usual dead-end layout)
+        self.assertEqual(z(lane_near_is="exiting", lane_count="entering"), (250, 600, "far"))
+        self.assertEqual(z(lane_near_is="exiting", lane_count="exiting"), (30, 250, "near"))
+        # near lane = coming in
+        self.assertEqual(z(lane_near_is="entering", lane_count="entering"), (30, 250, "near"))
+        self.assertEqual(z(lane_near_is="entering", lane_count="exiting"), (250, 600, "far"))
+        # both lanes, or lanes not set up: the whole range, whatever else is chosen
+        self.assertEqual(z(lane_count="both"), (30, 600, "both"))
+        self.assertEqual(z(lane_near_is="exiting", lane_count="entering", lane_split_cm=0), (30, 600, "both"))
+
+    def test_odd_splits_never_make_an_empty_zone(self):
+        for split in (5, 30, 35, 590, 600, 5000):
+            for count in ("entering", "exiting"):
+                lo, hi, _ = cc.effective_zone(self.cfg(lane_split_cm=split, lane_count=count))
+                self.assertGreater(hi, lo, (split, count, lo, hi))
+
+    def test_defaults_change_nothing_for_existing_installs(self):
+        c = cc.normalize_config({"min_cm": 120, "max_cm": 700})        # older config, no lane settings
+        self.assertEqual(cc.effective_zone(c), (120, 700, "both"))
+        self.assertEqual((c["lane_split_cm"], c["lane_count"], c["lane_near_is"]), (0, "both", "exiting"))
+
+    def test_bad_values_fall_back_safely(self):
+        c = cc.normalize_config({"lane_count": "sideways", "lane_near_is": "up", "lane_split_cm": "abc"})
+        self.assertEqual((c["lane_count"], c["lane_near_is"], c["lane_split_cm"]), ("both", "exiting", 0))
+
+    def drive(self, zone, readings):
+        """Feed a lidar stream (10 ms apart) through a detector with this zone; return how many cars it counts."""
+        det = cc.Detector()
+        det.set_params(zone[0], zone[1], 0, 150, 400, 120)
+        n, t = 0, 0.0
+        for dist in readings:
+            t += 0.01
+            if det.feed(t, dist, 100) == "car":
+                n += 1
+        return n
+
+    def test_only_the_chosen_lane_is_counted(self):
+        empty = [0] * 100
+        near_car = [150] * 60 + empty          # a car in the lane closest to the sensor
+        far_car = [380] * 60 + empty           # a car in the far lane
+        traffic = near_car + far_car + near_car + far_car + far_car
+        for near_is, count, expect in (("exiting", "entering", 3),       # near = leaving, count the far lane (entering)
+                                       ("exiting", "exiting", 2),        # count the near lane
+                                       ("entering", "entering", 2),      # near = coming in, count the near lane
+                                       ("entering", "exiting", 3),
+                                       ("exiting", "both", 5)):
+            zone = cc.effective_zone(self.cfg(lane_near_is=near_is, lane_count=count))[:2]
+            self.assertEqual(self.drive(zone, traffic), expect, (near_is, count))
+
+    def test_daemon_uses_the_chosen_lane_and_reports_it(self):
+        d = tempfile.mkdtemp()
+        os.environ.update(CC_DATA_DIR=d + "/data", CC_RUN_DIR=d + "/run", CC_LOG_FILE=d + "/log/c.log")
+        self.addCleanup(lambda: (shutil.rmtree(d), [os.environ.pop(k, None) for k in ("CC_DATA_DIR", "CC_RUN_DIR", "CC_LOG_FILE")]))
+        paths = cc.get_paths()
+        for p in (paths["data"], paths["run"], paths["cmd"]):
+            os.makedirs(p, exist_ok=True)
+        cc.atomic_write_json(paths["config"], {"min_cm": 30, "max_cm": 600, "lane_split_cm": 250, "lane_near_is": "exiting", "lane_count": "entering"}, 0o600)
+        dm = cc.Daemon(paths)
+        self.assertEqual((dm.detector.min_cm, dm.detector.max_cm), (250, 600))
+        dm.write_status(time.monotonic())
+        st = json.load(open(paths["status"]))
+        self.assertEqual((st["detector"]["lane"], st["detector"]["min_cm"], st["detector"]["max_cm"]), ("far", 250, 600))
+        dm.cfg.update({"lane_count": "exiting"}); dm.apply_detector_params()        # the user flips it to count leaving cars
+        self.assertEqual((dm.detector.min_cm, dm.detector.max_cm), (30, 250))

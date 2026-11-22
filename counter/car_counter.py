@@ -101,6 +101,9 @@ SCHEMA = {
     "unit": ("choice", "cm", ["cm", "mm"]),
     "min_cm": ("int", 30, 1, 5000),
     "max_cm": ("int", 1200, 2, 20000),
+    "lane_split_cm": ("int", 0, 0, 20000),                          # distance midway between the two lanes (0 = lanes not set up)
+    "lane_near_is": ("choice", "exiting", ["entering", "exiting"]),  # what the lane CLOSEST to the sensor carries
+    "lane_count": ("choice", "both", ["both", "entering", "exiting"]),  # which cars to count
     "min_strength": ("int", 0, 0, 65534),
     "confirm_ms": ("int", 250, 20, 5000),
     "clear_ms": ("int", 800, 100, 30000),
@@ -442,6 +445,21 @@ class Detector:
 # --------------------------------------------------------------------------
 # Schedule
 # --------------------------------------------------------------------------
+def effective_zone(cfg):
+    """The band of distances that counts as a car: (nearest_cm, farthest_cm, lane) where lane is "both", "near" or "far".
+
+    min_cm / max_cm are the sensor's overall range.  With the lanes set up (lane_split_cm > 0) and one direction chosen, the
+    band is narrowed to just that lane: the lane closest to the sensor carries lane_near_is traffic, the other lane the opposite.
+    """
+    lo, hi = cfg["min_cm"], cfg["max_cm"]
+    split, count = cfg["lane_split_cm"], cfg["lane_count"]
+    if split <= 0 or count == "both":
+        return lo, hi, "both"
+    if count == cfg["lane_near_is"]:                 # the wanted traffic is in the near lane
+        return lo, max(lo + 10, min(hi, split)), "near"
+    return max(lo, min(split, hi - 10)), hi, "far"   # ...or in the far lane
+
+
 def show_date_for(dt, rollover_hour):
     """The 'show night' an event belongs to; nights roll over at rollover_hour."""
     return (dt - datetime.timedelta(hours=rollover_hour)).date().isoformat()
@@ -1091,7 +1109,8 @@ class Daemon:
     # ---- config helpers --------------------------------------------------
     def apply_detector_params(self):
         c = self.cfg
-        self.detector.set_params(c["min_cm"], c["max_cm"], c["min_strength"],
+        lo, hi, _lane = effective_zone(c)
+        self.detector.set_params(lo, hi, c["min_strength"],
                                  c["confirm_ms"], c["clear_ms"], c["max_dwell_s"])
 
     def _load_last_sync(self):
@@ -1367,8 +1386,9 @@ class Daemon:
                 "in_zone": det.in_zone,
                 "present_s": round(det.present_seconds(mono), 1),
                 "stuck": det.stuck,
-                "min_cm": self.cfg["min_cm"],
-                "max_cm": self.cfg["max_cm"],
+                "min_cm": effective_zone(self.cfg)[0],     # the band that actually counts (narrowed to one lane if chosen)
+                "max_cm": effective_zone(self.cfg)[1],
+                "lane": effective_zone(self.cfg)[2],
             },
             "counting": {"active": active, "reason": reason, "mode": self.cfg["schedule_mode"]},
             "today": today,

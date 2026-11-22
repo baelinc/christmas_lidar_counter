@@ -161,13 +161,37 @@ require_once __DIR__ . '/lib.php';
       </div>
     </div>
     <div class="panel"><h3>Sensor</h3><div id="fSensor"></div></div>
-    <div class="panel" id="laneHelper"><h3>Count only one lane (optional)</h3>
-      <div class="help" style="opacity:.9">On a two-way road, cars arriving pass in one lane and cars leaving pass in the other. Aim the sensor across the road, then let it ignore the lane nearest to it, so each car is counted once instead of twice. Two quick steps:</div>
-      <div class="lane-step"><span>Live reading</span><span class="lane-now" id="laneNow">–</span></div>
-      <div class="lane-step"><span><b>1.</b> Put a car (or yourself) in the lane <b>nearest</b> the sensor, hold still, then</span><button class="b" id="laneNear">Record near lane</button><span class="lane-val" id="laneNearV"></span></div>
-      <div class="lane-step"><span><b>2.</b> Do the same in the <b>far</b> lane, then</span><button class="b" id="laneFar">Record far lane</button><span class="lane-val" id="laneFarV"></span></div>
+    <div class="panel" id="laneHelper"><h3>Which lane do you want to count?</h3>
+      <div class="help" style="opacity:.9">On a two-way road, cars coming in pass one lane and cars leaving pass the other. Tell the counter which is which and what to count, so each car is counted once instead of twice.</div>
+      <svg id="laneSvg" viewBox="0 0 320 142" role="img" aria-label="The far lane at the top, the near lane below it, and the sensor beside the near lane">
+        <rect id="laneFarBox" x="10" y="8" width="300" height="46" rx="9" class="lane-box"/>
+        <rect id="laneNearBox" x="10" y="60" width="300" height="46" rx="9" class="lane-box"/>
+        <text id="laneFarTxt" x="160" y="36" text-anchor="middle" class="lane-txt"></text>
+        <text id="laneNearTxt" x="160" y="88" text-anchor="middle" class="lane-txt"></text>
+        <path d="M160 130 L118 110 M160 130 L202 110" class="lane-beam"/>
+        <circle cx="160" cy="130" r="7" class="lane-sensor"/>
+        <text x="176" y="136" class="lane-small">sensor (you are here)</text>
+      </svg>
+      <div class="lane-q"><b>1.</b> The lane <b>closest to the sensor</b> carries cars that are…</div>
+      <div class="seg" role="radiogroup" aria-label="Direction of the near lane">
+        <label><input type="radio" name="laneNearIs" value="entering"><span>Coming in</span></label>
+        <label><input type="radio" name="laneNearIs" value="exiting"><span>Leaving</span></label>
+      </div>
+      <div class="lane-q"><b>2.</b> Which cars do you want to <b>count</b>?</div>
+      <div class="seg" role="radiogroup" aria-label="Which cars to count">
+        <label><input type="radio" name="laneCount" value="entering"><span>Cars coming in</span></label>
+        <label><input type="radio" name="laneCount" value="exiting"><span>Cars leaving</span></label>
+        <label><input type="radio" name="laneCount" value="both"><span>Both lanes</span></label>
+      </div>
+      <div id="laneRecord">
+        <div class="lane-q"><b>3.</b> Show the sensor where the lanes are.</div>
+        <div class="lane-step"><span>Live reading</span><span class="lane-now" id="laneNow">–</span></div>
+        <div class="lane-step"><span>Put a car (or yourself) in the lane <b>closest</b> to the sensor, hold still, then</span><button class="b" id="laneNear">Record near lane</button><span class="lane-val" id="laneNearV"></span></div>
+        <div class="lane-step"><span>Do the same in the <b>far</b> lane, then</span><button class="b" id="laneFar">Record far lane</button><span class="lane-val" id="laneFarV"></span></div>
+      </div>
+      <div class="msg" id="laneCurrent"></div>
       <div class="msg" id="laneMsg"></div>
-      <div class="row"><button class="b primary" id="laneApply" disabled>Use these settings</button><button class="b" id="laneReset">Count both lanes again</button></div>
+      <div class="row"><button class="b primary" id="laneApply" disabled>Save lane settings</button><button class="b" id="laneReset">Count both lanes again</button></div>
     </div>
     <div class="panel"><h3>Detection</h3><div id="fDetect"></div></div>
     <div class="panel"><h3>When to count</h3><div id="fSched"></div></div>
@@ -479,6 +503,7 @@ require_once __DIR__ . '/lib.php';
     });
     populateUsb();
     populateIfaces();
+    if (typeof laneInit === 'function') laneInit();
     applyConnection();
     applyModeVisibility();
   }
@@ -728,7 +753,7 @@ require_once __DIR__ . '/lib.php';
     var items = [
       { done: sensorOk, req: true, t: 'Connect the lidar sensor', d: sensorOk ? 'Sensor is sending readings.' : (cfg.connection === 'gpio' && portInfo.uart === 'needs_restart' ? 'Restart the Pi once to finish switching on the serial port.' : 'Plug it in and choose how it is connected.'), tab: 'settings' },
       { done: !!(cfg.schedules && cfg.schedules.length) || cfg.schedule_mode === 'always', req: false, t: 'Set your show hours', d: 'Cars are only counted during these hours.', tab: 'settings' },
-      { done: cfg.min_cm > 30, req: false, t: 'Count only one lane (optional)', d: 'Avoids counting cars twice on a two-way road.', tab: 'settings' },
+      { done: (cfg.lane_count !== 'both' && cfg.lane_split_cm > 0) || cfg.min_cm > 30, req: false, t: 'Choose which lane to count (optional)', d: 'Avoids counting cars twice on a two-way road.', tab: 'settings' },
       { done: web, req: true, t: 'Connect to your website', d: web ? 'Uploading to ' + cfg.wp_url + '.' : 'Enter your website address and secret.', tab: 'website' }
     ];
     items.push({ done: cfg.schedule_mode === 'playing' && !!cfg.fpp_host, req: false, t: 'Follow your Falcon Player (optional)', d: 'Only count while your show is playing.', tab: 'settings' });
@@ -766,18 +791,63 @@ require_once __DIR__ . '/lib.php';
       v.sort(function (a, b) { return a - b; }); return v[Math.floor(v.length / 2)];
     });
   }
+  function radioVal(name) {
+    var el = d_q('input[name=' + name + ']:checked'); return el ? el.value : '';
+  }
+  function d_q(sel) { return document.querySelector(sel); }
+  function setRadio(name, val) {
+    Array.prototype.forEach.call(document.querySelectorAll('input[name=' + name + ']'), function (r) { r.checked = (r.value === val); });
+  }
+  function laneWord(dir) { return dir === 'entering' ? 'coming in' : 'leaving'; }
+  function laneSplitNow() {
+    if (laneNear !== null && laneFar !== null && laneFar >= laneNear + 30) return Math.round((laneNear + laneFar) / 2);
+    return cfg && cfg.lane_split_cm > 0 ? cfg.lane_split_cm : 0;
+  }
+  function laneDescribe() {
+    var near = radioVal('laneNearIs'), count = radioVal('laneCount');
+    var far = near === 'entering' ? 'exiting' : 'entering';
+    var nearCounted = count === 'both' || count === near, farCounted = count === 'both' || count === far;
+    function paint(id, on) { var e = $(id); e.setAttribute('class', 'lane-box ' + (on ? 'counted' : 'ignored')); }
+    paint('laneNearBox', nearCounted); paint('laneFarBox', farCounted);
+    $('laneNearTxt').textContent = 'Near lane – cars ' + laneWord(near) + (nearCounted ? '  ✓ counted' : '  ✗ ignored');
+    $('laneFarTxt').textContent = 'Far lane – cars ' + laneWord(far) + (farCounted ? '  ✓ counted' : '  ✗ ignored');
+    $('laneRecord').style.display = count === 'both' ? 'none' : '';
+  }
+  function laneCurrentText() {
+    var m = $('laneCurrent');
+    if (!cfg || !radioVal('laneNearIs')) return;
+    if (cfg.lane_count !== 'both' && cfg.lane_split_cm > 0) {
+      var which = cfg.lane_count === cfg.lane_near_is ? 'near' : 'far';
+      m.textContent = 'Now counting only cars ' + laneWord(cfg.lane_count) + ' (the ' + which + ' lane). Cars in the other lane are ignored. The lanes are split at ' + cfg.lane_split_cm + ' cm.';
+      m.className = 'msg ok';
+    } else {
+      m.textContent = 'Now counting both lanes.' + (cfg.min_cm > 30 ? ' (Readings closer than ' + cfg.min_cm + ' cm are ignored – see Detection below.)' : '');
+      m.className = 'msg';
+    }
+  }
+  function laneInit() {
+    if (!cfg) return;
+    setRadio('laneNearIs', cfg.lane_near_is || 'exiting');
+    setRadio('laneCount', cfg.lane_count || 'both');
+    laneDescribe(); laneUpdate(); laneCurrentText();
+  }
   function laneUpdate() {
     $('laneNearV').textContent = laneNear === null ? '' : laneNear + ' cm';
     $('laneFarV').textContent = laneFar === null ? '' : laneFar + ' cm';
-    var ok = laneNear !== null && laneFar !== null && laneFar >= laneNear + 30;
-    $('laneApply').disabled = !ok;
+    var count = radioVal('laneCount'), both = laneNear !== null && laneFar !== null;
+    var readingsOk = both && laneFar >= laneNear + 30;
     var m = $('laneMsg');
-    if (laneNear !== null && laneFar !== null && !ok) setMsg(m, 'The two readings are too close together – check the near lane is really closer to the sensor than the far lane.', false);
-    else if (ok) setMsg(m, 'Cars closer than ' + Math.round((laneNear + laneFar) / 2) + ' cm (the near lane) will be ignored; cars farther out will be counted.', true);
+    var haveSplit = readingsOk || (cfg && cfg.lane_split_cm > 0 && !both);
+    $('laneApply').disabled = !(count === 'both' || haveSplit);
+    if (count === 'both') { setMsg(m, 'Both lanes will be counted.', true); return; }
+    if (both && !readingsOk) setMsg(m, 'The two readings are too close together – check the near lane is really closer to the sensor than the far lane.', false);
+    else if (readingsOk) setMsg(m, 'The lanes will be split at ' + Math.round((laneNear + laneFar) / 2) + ' cm.', true);
+    else if (cfg && cfg.lane_split_cm > 0) setMsg(m, 'Using the lane split you already saved (' + cfg.lane_split_cm + ' cm). Record both lanes again only if you moved the sensor.', true);
+    else setMsg(m, 'Record the near lane and the far lane so the counter knows where they are.', true);
   }
   function laneRecord(which) {
     var m = $('laneMsg'); setMsg(m, 'Reading… hold still for a moment.', true);
-    sampleDistance(5).then(function (v) {
+    sampleDistance(8).then(function (v) {
       if (v === null) { setMsg(m, 'The sensor sees nothing there. Put a car or person in that lane, hold still and try again.', false); return; }
       if (which === 'near') laneNear = v; else laneFar = v;
       laneUpdate();
@@ -785,20 +855,40 @@ require_once __DIR__ . '/lib.php';
   }
   $('laneNear').onclick = function () { laneRecord('near'); };
   $('laneFar').onclick = function () { laneRecord('far'); };
+  Array.prototype.forEach.call(document.querySelectorAll('input[name=laneNearIs], input[name=laneCount]'), function (r) {
+    r.onchange = function () { laneDescribe(); laneUpdate(); };
+  });
+  function laneRefresh(msg, ok) {
+    return api('config').then(function (c) { cfg = c; fillForms(); renderSetup(); setMsg($('laneMsg'), msg, ok); });
+  }
   $('laneApply').onclick = function () {
-    var min = Math.round((laneNear + laneFar) / 2), max = cfg.max_cm;
-    if (max < laneFar + 50) max = laneFar + 150;
-    api('save_config', { min_cm: min, max_cm: max }).then(function (r) {
-      setMsg($('laneMsg'), r.ok ? 'Saved: nearest ' + min + ' cm, farthest ' + max + ' cm. Drive a car through each way to check it counts once.' : (r.error || 'Save failed'), r.ok);
-      return api('config').then(function (c) { cfg = c; fillForms(); renderSetup(); });
-    });
+    var near = radioVal('laneNearIs'), count = radioVal('laneCount');
+    var body = { lane_near_is: near, lane_count: count };
+    var legacy = cfg.lane_split_cm === 0 && cfg.min_cm > 30;        // an older version ignored a lane by raising the nearest distance
+    if (count === 'both') {
+      body.lane_split_cm = 0;
+    } else {
+      body.lane_split_cm = laneSplitNow();
+      if (!body.lane_split_cm) { setMsg($('laneMsg'), 'Record both lanes first.', false); return; }
+      var farCounted = count !== near;
+      if (laneFar !== null && farCounted && cfg.max_cm < laneFar + 50) body.max_cm = laneFar + 150;   // far lane must be inside the range
+    }
+    if (legacy) body.min_cm = 30;
+    $('laneApply').disabled = true; setMsg($('laneMsg'), 'Saving…', true);
+    api('save_config', body).then(function (r) {
+      if (!r.ok) { setMsg($('laneMsg'), r.error || 'Save failed', false); laneUpdate(); return; }
+      var done = count === 'both' ? 'Saved. Both lanes will be counted.'
+        : 'Saved. Counting only cars ' + laneWord(count) + ' (the ' + (count === near ? 'near' : 'far') + ' lane). Drive a car through each way to check it counts once.';
+      return laneRefresh(done, true).then(function () { laneNear = laneFar = null; laneUpdate(); setMsg($('laneMsg'), done, true); });
+    }).catch(function () { setMsg($('laneMsg'), 'Could not reach the counter.', false); laneUpdate(); });
   };
   $('laneReset').onclick = function () {
-    api('save_config', { min_cm: 30 }).then(function (r) {
-      laneNear = laneFar = null; laneUpdate();
-      setMsg($('laneMsg'), r.ok ? 'Both lanes will be counted again (nearest distance set back to 30 cm).' : 'Save failed', r.ok);
-      return api('config').then(function (c) { cfg = c; fillForms(); renderSetup(); });
-    });
+    var body = { lane_count: 'both', lane_split_cm: 0 };
+    if (cfg.lane_split_cm === 0 && cfg.min_cm > 30) body.min_cm = 30;
+    api('save_config', body).then(function (r) {
+      laneNear = laneFar = null;
+      return laneRefresh(r.ok ? 'Both lanes will be counted again.' : 'Save failed', r.ok);
+    }).then(function () { laneInit(); });
   };
 
   // ---- Network connection choice (Ethernet / Wi-Fi) for the board and the Falcon Player ----
